@@ -17,7 +17,7 @@ var posts = []post{}
 
 var ui tui.UI
 
-var history *tui.Box
+var history *tui.List
 var titleBox *tui.Box
 
 var sidebar *tui.Box
@@ -38,7 +38,7 @@ func main() {
 
 	sidebar.SetBorder(true)
 
-	history = tui.NewVBox()
+	history = tui.NewList()
 
 	historyScroll := tui.NewScrollArea(history)
 	historyScroll.SetAutoscrollToBottom(true)

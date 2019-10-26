@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"image"
 	"log"
 	"net/url"
 
@@ -63,16 +62,13 @@ func connect() error {
 func changeSelectedChannel() {
 	sub := subscriptionList[selectedChannel]
 
-	channelList.SetCell(image.Point{0, selectedChannel}, tui.NewLabel(fmt.Sprintf("*[%s] %s", sub.Type, sub.Name)))
+	//channelList.SetCell(image.Point{0, selectedChannel}, tui.NewLabel(fmt.Sprintf("*[%s] %s", sub.Type, sub.Name)))
 
 	titleBox.Remove(0)
 
 	titleBox.Append(tui.NewLabel(sub.Name))
 
-	for i := 0; i < len(messageHistory); i++ {
-		log.Println("booga booga", i)
-		history.Remove(i)
-	}
+	history.RemoveItems()
 
 	messageHistory = []models.Message{}
 
@@ -130,12 +126,13 @@ func handleMessageStream() {
 		}
 
 		ui.Update(func() {
-			history.Append(tui.NewHBox(
+			history.AddItems(fmt.Sprintf("%s <%s> %s", message.Timestamp.Format("15:04"), message.User.UserName, text))
+			/*history.Append(tui.NewHBox(
 				tui.NewLabel(message.Timestamp.Format("15:04")),
 				tui.NewPadder(1, 0, tui.NewLabel(fmt.Sprintf("<%s>", message.User.UserName))),
 				tui.NewLabel(text),
 				tui.NewSpacer(),
-			))
+			))*/
 		})
 	}
 }
