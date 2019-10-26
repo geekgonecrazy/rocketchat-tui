@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"strings"
 
 	"github.com/RocketChat/Rocket.Chat.Go.SDK/models"
 	"github.com/RocketChat/Rocket.Chat.Go.SDK/realtime"
 	"github.com/RocketChat/Rocket.Chat.Go.SDK/rest"
-	"github.com/marcusolsson/tui-go"
+	"github.com/geekgonecrazy/tui-go"
+	wordwrap "github.com/mitchellh/go-wordwrap"
 )
 
 var rlClient *realtime.Client
@@ -18,6 +20,8 @@ var msgChannel chan models.Message
 
 var subscribed = make(map[string]string)
 var messageHistory []models.Message
+
+var activeChannel models.ChannelSubscription
 
 var email = ""
 var password = ""
@@ -59,24 +63,23 @@ func connect() error {
 	return nil
 }
 
-func changeSelectedChannel() {
-	sub := subscriptionList[selectedChannel]
-
-	//channelList.SetCell(image.Point{0, selectedChannel}, tui.NewLabel(fmt.Sprintf("*[%s] %s", sub.Type, sub.Name)))
+func changeSelectedChannel(index int) {
+	activeChannel = subscriptionList[index]
 
 	titleBox.Remove(0)
 
-	titleBox.Append(tui.NewLabel(sub.Name))
+	titleBox.Append(tui.NewLabel(activeChannel.Name))
 
-	history.RemoveItems()
+	history.RemoveRows()
 
 	messageHistory = []models.Message{}
 
-	if _, ok := subscribed[sub.RoomId]; !ok {
-		if err := rlClient.SubscribeToMessageStream(&models.Channel{ID: sub.RoomId}, msgChannel); err != nil {
+	if _, ok := subscribed[activeChannel.RoomId]; !ok {
+		if err := rlClient.SubscribeToMessageStream(&models.Channel{ID: activeChannel.RoomId}, msgChannel); err != nil {
 			log.Println(err)
 		}
-		subscribed[sub.RoomId] = sub.RoomId
+
+		subscribed[activeChannel.RoomId] = activeChannel.RoomId
 	}
 
 	loadHistory()
@@ -84,16 +87,10 @@ func changeSelectedChannel() {
 
 func handleMessageStream() {
 
-	/*channelId, err := rlClient.GetChannelId("cli-test-test")
-	if err != nil {
-		panic(err)
-	}*/
-
 	for {
 		message := <-msgChannel
 
-		if message.RoomID != subscriptionList[selectedChannel].RoomId {
-			//log.Println("got message for channel not in")
+		if message.RoomID != activeChannel.RoomId {
 			continue
 		}
 
@@ -105,45 +102,28 @@ func handleMessageStream() {
 			text = message.Text
 		}
 
-		if len(message.Attachments) > 0 {
-			for _, attachment := range message.Attachments {
-				if attachment.ImageURL != "" {
-					text += fmt.Sprintf(" <%s>", attachment.ImageURL)
-				}
-
-				if attachment.TitleLink != "" {
-					text += fmt.Sprintf(" <%s>", attachment.TitleLink)
-				}
-
-				if attachment.VideoURL != "" {
-					text += fmt.Sprintf(" <%s>", attachment.VideoURL)
-				}
-
-				if attachment.ThumbURL != "" {
-					text += fmt.Sprintf(" <%s>", attachment.ThumbURL)
-				}
-			}
-		}
-
 		ui.Update(func() {
-			history.AddItems(fmt.Sprintf("%s <%s> %s", message.Timestamp.Format("15:04"), message.User.UserName, text))
-			/*history.Append(tui.NewHBox(
-				tui.NewLabel(message.Timestamp.Format("15:04")),
-				tui.NewPadder(1, 0, tui.NewLabel(fmt.Sprintf("<%s>", message.User.UserName))),
-				tui.NewLabel(text),
-				tui.NewSpacer(),
-			))*/
+
+			line := fmt.Sprintf("%s <%s> %s", message.Timestamp.Format("15:04"), message.User.UserName, text)
+
+			// couldn't get the automatic linewrapping to function right
+			lineNewlines := wordwrap.WrapString(line, uint(chat.Size().X))
+			linesSplit := strings.Split(lineNewlines, "\n")
+
+			box := tui.NewVBox()
+
+			for _, l := range linesSplit {
+				box.Append(tui.NewLabel(l))
+			}
+
+			history.AppendRow(box)
 		})
 	}
 }
 
 func sendMessage(text string) {
-	/*channelId, err := rlClient.GetChannelId("cli-test-test")
-	if err != nil {
-		panic(err)
-	}*/
 
-	channelId := subscriptionList[selectedChannel].RoomId
+	channelId := activeChannel.RoomId
 
 	if _, err := rlClient.SendMessage(&models.Message{RoomID: channelId, Msg: text}); err != nil {
 		log.Println(err)
@@ -151,19 +131,18 @@ func sendMessage(text string) {
 }
 
 func loadHistory() {
-	/*channelId, err := rlClient.GetChannelId("cli-test-test")
-	if err != nil {
-		panic(err)
-	}*/
-
-	channelId := subscriptionList[selectedChannel].RoomId
+	channelId := activeChannel.RoomId
 
 	messages, err := rlClient.LoadHistory(channelId)
 	if err != nil {
 		log.Println(err)
 	}
 
-	//fmt.Printf("%+v", messages)
+	// Reverse order so will show up properly
+	for i := len(messages)/2 - 1; i >= 0; i-- {
+		opp := len(messages) - 1 - i
+		messages[i], messages[opp] = messages[opp], messages[i]
+	}
 
 	for _, message := range messages {
 		msgChannel <- message
@@ -178,20 +157,15 @@ func getSubscriptions() {
 		panic(err)
 	}
 
-	subscriptionList = subscriptions
-
 	ui.Update(func() {
 		for _, sub := range subscriptions {
-			channelList.AppendRow(
-				tui.NewLabel(fmt.Sprintf("[%s] %s", sub.Type, sub.Name)),
-			)
+			if sub.Open && sub.Name != "" {
+				channelList.AppendRow(
+					tui.NewLabel(fmt.Sprintf("[%s] %s", sub.Type, sub.Name)),
+				)
+
+				subscriptionList = append(subscriptionList, sub)
+			}
 		}
 	})
-
-	/*tui.NewLabel("CHANNELS"),
-	tui.NewLabel("general"),
-	tui.NewLabel(""),
-	tui.NewLabel("DIRECT MESSAGES"),
-	tui.NewLabel("aaron.ogle"),
-	tui.NewSpacer()*/
 }
