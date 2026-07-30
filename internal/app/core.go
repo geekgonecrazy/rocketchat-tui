@@ -76,6 +76,10 @@ type Core struct {
 	// cannot pin the indicator on forever.
 	typists map[string]map[string]time.Time
 
+	// membersSynced is when each room's roster was last fetched, so revisiting a
+	// room does not re-list its members on every open.
+	membersSynced map[string]time.Time
+
 	// Thread membership lives on the parent message, so a reply arriving does
 	// not tell us the parent is now a thread. The list has to be re-fetched, and
 	// these two fields keep a busy thread from causing a request per reply.
@@ -110,6 +114,7 @@ func New(client *rocket.Client, cache *store.Store, logger *slog.Logger) *Core {
 		loadingMore:      make(map[string]bool),
 		timelineLimit:    make(map[string]int),
 		typists:          make(map[string]map[string]time.Time),
+		membersSynced:    make(map[string]time.Time),
 		threadListDirty:  make(map[string]bool),
 		threadListSynced: make(map[string]time.Time),
 		typingActive:     make(map[string]bool),
@@ -267,6 +272,9 @@ func (c *Core) Refresh() {
 		c.background(c.syncRooms)
 		if c.currentRoom != "" {
 			c.catchUpRoom(c.currentRoom)
+			// An explicit resync means "now", so the roster's TTL does not apply.
+			delete(c.membersSynced, c.currentRoom)
+			c.syncMembers(c.currentRoom)
 		}
 	})
 }

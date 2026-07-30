@@ -102,6 +102,11 @@ type chatModel struct {
 	// picker backs both the composer's inline emoji completer and the modal
 	// reaction picker; only one is ever open.
 	picker emojiPicker
+
+	// mentions is the composer's inline "@" completer, fed by members.
+	mentions mentionPicker
+	// members are the mention candidates for the open room, best first.
+	members []model.Member
 }
 
 func newChatModel(core *app.Core, theme render.Theme, username, serverLabel string) chatModel {
@@ -155,8 +160,13 @@ func (m chatModel) composerHeight() int {
 	return lines
 }
 
-// pickerHeight is how many lines the emoji list occupies, zero when closed.
+// pickerHeight is how many lines the open completion list occupies, zero when
+// none is open. Only one can be open at a time: an "@" token and a ":" token
+// cannot both be what is being typed.
 func (m chatModel) pickerHeight() int {
+	if m.mentions.active() {
+		return min(mentionRows, max(1, len(m.mentions.matches)))
+	}
 	if !m.picker.active() {
 		return 0
 	}
@@ -261,6 +271,18 @@ func (m chatModel) handleCoreEvent(event app.Event) (chatModel, tea.Cmd) {
 			m.rebuildBody()
 		}
 
+	case app.MembersUpdated:
+		if e.RoomID != m.activeRoom {
+			return m, nil
+		}
+		m.members = e.Members
+		// A roster arriving while the completer is open should widen the list
+		// under the cursor, not wait for the next keystroke.
+		if m.mentions.active() {
+			m.mentions.refresh(m.members)
+			m.rebuildBody()
+		}
+
 	case app.TypingUpdated:
 		if len(e.Users) == 0 {
 			delete(m.typing, e.RoomID)
@@ -320,7 +342,15 @@ func (m chatModel) View() string {
 	}
 
 	var picker []string
-	if m.picker.active() {
+	if m.mentions.active() {
+		picker = render.MentionPicker(m.theme, render.MentionPickerState{
+			Query:   m.mentions.query,
+			Matches: m.mentions.matches,
+			Cursor:  m.mentions.cursor,
+			Width:   m.width,
+			MaxRows: mentionRows,
+		})
+	} else if m.picker.active() {
 		title := ""
 		if m.picker.mode == pickerReact {
 			title = "React"
@@ -410,7 +440,7 @@ func (m chatModel) statusBar() string {
 	hints := "enter thread · r react · ctrl+t threads · ? help"
 	switch m.focus {
 	case focusComposer:
-		hints = "enter send · :emoji · ctrl+t threads · ? help"
+		hints = "enter send · @mention · :emoji · ctrl+t threads · ? help"
 	case focusRooms:
 		hints = "enter open · / filter · ctrl+t threads · ? help"
 	}

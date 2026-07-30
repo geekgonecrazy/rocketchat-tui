@@ -43,7 +43,9 @@ func (c *Core) OpenRoom(roomID string) {
 
 		c.emitTimeline(roomID)
 		c.emitTyping(roomID)
+		c.emitMembers(roomID)
 		c.catchUpRoom(roomID)
+		c.syncMembers(roomID)
 		c.markRead(roomID)
 		c.loadThreadList(roomID)
 	})

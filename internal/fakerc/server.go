@@ -63,6 +63,8 @@ type Server struct {
 	subscriptions []map[string]any
 	messages      []map[string]any
 	threads       []map[string]any
+	members       map[string][]map[string]any
+	memberPaths   []string
 	conns         []*wsConn
 	notifications []Notification
 	sent          []SentMessage
@@ -74,7 +76,7 @@ type Server struct {
 // New starts a fake server. It is shut down when the test ends.
 func New(t *testing.T) *Server {
 	t.Helper()
-	s := &Server{t: t}
+	s := &Server{t: t, members: make(map[string][]map[string]any)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/login", s.handleLogin)
@@ -85,6 +87,9 @@ func New(t *testing.T) *Server {
 	mux.HandleFunc("/api/v1/channels.history", s.authed(s.handleHistory))
 	mux.HandleFunc("/api/v1/groups.history", s.authed(s.handleHistory))
 	mux.HandleFunc("/api/v1/im.history", s.authed(s.handleHistory))
+	mux.HandleFunc("/api/v1/channels.members", s.authed(s.handleMembers))
+	mux.HandleFunc("/api/v1/groups.members", s.authed(s.handleMembers))
+	mux.HandleFunc("/api/v1/im.members", s.authed(s.handleMembers))
 	mux.HandleFunc("/api/v1/chat.syncMessages", s.authed(s.handleSyncMessages))
 	mux.HandleFunc("/api/v1/chat.getThreadsList", s.authed(s.handleThreadsList))
 	mux.HandleFunc("/api/v1/chat.getThreadMessages", s.authed(s.handleThreadMessages))
@@ -159,6 +164,20 @@ func (s *Server) AddSubscription(roomID, roomType, name string, unread, mentions
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.subscriptions = append(s.subscriptions, sub)
+}
+
+// AddMembers registers who is in a room, as the members endpoints report them.
+func (s *Server) AddMembers(roomID string, usernames ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, username := range usernames {
+		s.members[roomID] = append(s.members[roomID], map[string]any{
+			"_id":      "user-" + username,
+			"username": username,
+			"name":     strings.ToUpper(username[:1]) + username[1:],
+			"status":   "online",
+		})
+	}
 }
 
 // AddMessage registers a stored message.
@@ -331,6 +350,13 @@ func (s *Server) SentMessages() []SentMessage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]SentMessage(nil), s.sent...)
+}
+
+// MemberPaths returns the members endpoints the client called, in order.
+func (s *Server) MemberPaths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.memberPaths...)
 }
 
 // ReadRooms returns the rooms the client marked read.

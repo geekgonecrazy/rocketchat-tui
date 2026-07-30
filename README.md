@@ -23,6 +23,7 @@ rooms and history immediately instead of an empty screen.
 - Thread view: browse a room's threads, read a thread, and reply into it
 - Emoji: shortcodes render as glyphs, `:jo` pops up an autocomplete while you
   type, and any message can be reacted to
+- Mentions: `@` autocompletes the people in the room, plus `@all` and `@here`
 - Works offline against the local cache; reconnects and resyncs automatically
 
 ## Install
@@ -79,6 +80,7 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `enter` | Rooms: open · Messages: open or start a thread · Composer: send |
 | `ctrl+t` | Thread list for this room — works while typing |
 | `r` | React to the selected message |
+| `@` | Autocomplete a mention while typing |
 | `alt+enter` | Newline in the composer |
 | `/` | Filter the room list |
 | `g` | Load older messages |
@@ -93,6 +95,28 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 The mouse works too: click a room to open it, click a message to select it,
 click a `↳ N replies` line to open that thread, click a reaction to toggle it,
 and scroll with the wheel.
+
+### Mentions
+
+Typing `@` in the composer opens a list of the people in the room; keep typing
+to narrow it:
+
+```
+› thanks @sa
+  @sanjay  Sanjay Patel
+  @sam.oconnell  Sam O'Connell
+  @sandra  Sandra Diaz
+```
+
+`tab` or `enter` inserts the username, `↑`/`↓` move, `esc` dismisses. `@all`
+and `@here` are offered too, after the people, so a real name is never
+displaced while you are typing one.
+
+Candidates are the room's member list merged with everyone who has spoken in
+the room, most recently spoken first — so the person you are replying to is
+usually the first suggestion, and the list still works from the cache when you
+are offline or when the server will not list a channel's members. An `@` in the
+middle of a word never opens the list, so email addresses are left alone.
 
 ### Emoji and reactions
 
@@ -134,7 +158,7 @@ cmd/rctui/              the binary: flags, config, logging, program startup
 internal/rocket/        the mini SDK: REST + DDP, no other internal deps
 internal/emoji/         shortcode ↔ glyph table, generated from gemoji
 internal/model/         view-facing domain types (Room, Message, Kind)
-internal/store/         SQLite cache: rooms, subscriptions, messages, paging state
+internal/store/         SQLite cache: rooms, subscriptions, messages, members, paging state
 internal/app/           headless core: owns SDK + cache + all state, emits events
 internal/ui/            Bubbletea models: input handling and widget state
 internal/ui/render/     pure functions: view state → strings, no Bubbletea

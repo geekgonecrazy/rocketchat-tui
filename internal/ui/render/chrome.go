@@ -204,6 +204,14 @@ func HelpOverlay(theme Theme, width int) []string {
 
 	lines = append(lines,
 		"",
+		theme.Title.Render("  Mentions"),
+		"  "+theme.Muted.Render(Truncate(
+			"Type @ in the composer and the people in this room appear; keep", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"typing to narrow them. tab or enter inserts the username, esc", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"dismisses. @all and @here notify the room.", max(1, width-4))),
+		"",
 		theme.Title.Render("  Emoji"),
 		"  "+theme.Muted.Render(Truncate(
 			"Type a colon and a few letters — :jo — and a list appears. tab or", max(1, width-4))),

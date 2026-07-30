@@ -53,6 +53,13 @@ type ThreadUpdated struct {
 	Replies  []model.Message
 }
 
+// MembersUpdated is who the composer may offer for an @ mention in a room:
+// the room's fetched roster merged with everyone who has spoken there.
+type MembersUpdated struct {
+	RoomID  string
+	Members []model.Member
+}
+
 // TypingUpdated is the current set of typists in a room, excluding the local
 // user.
 type TypingUpdated struct {
@@ -88,6 +95,7 @@ func (RoomsUpdated) isAppEvent()      {}
 func (TimelineUpdated) isAppEvent()   {}
 func (ThreadListUpdated) isAppEvent() {}
 func (ThreadUpdated) isAppEvent()     {}
+func (MembersUpdated) isAppEvent()    {}
 func (TypingUpdated) isAppEvent()     {}
 func (StatusChanged) isAppEvent()     {}
 func (SessionReady) isAppEvent()      {}

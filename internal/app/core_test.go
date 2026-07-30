@@ -921,3 +921,54 @@ func TestThreadStartedAfterRoomIsOpenAppearsInTheList(t *testing.T) {
 		return false, false
 	})
 }
+
+func TestOpenRoomPublishesMentionCandidates(t *testing.T) {
+	h := newHarness(t)
+	lastSeen := time.Now().Add(-time.Hour)
+	h.seedRoom("room-1", "general", 0, 0, lastSeen)
+	// dana is in the room but has never spoken; erin has spoken and, on a real
+	// server, might have since left — both should be offerable.
+	h.server.AddMembers("room-1", "dana", "tester")
+	h.server.AddMessage("m1", "room-1", "erin", "morning", lastSeen.Add(time.Minute), nil)
+
+	h.start()
+	h.waitForRoomInSidebar("room-1")
+	h.core.OpenRoom("room-1")
+
+	members := waitFor(t, "mention candidates", func() (app.MembersUpdated, bool) {
+		events := h.snapshot()
+		for i := len(events) - 1; i >= 0; i-- {
+			update, ok := events[i].(app.MembersUpdated)
+			if !ok || update.RoomID != "room-1" {
+				continue
+			}
+			if len(update.Members) >= 2 {
+				return update, true
+			}
+		}
+		return app.MembersUpdated{}, false
+	})
+
+	var names []string
+	for _, member := range members.Members {
+		names = append(names, member.Username)
+	}
+	for _, want := range []string{"dana", "erin"} {
+		if !containsString(names, want) {
+			t.Errorf("candidates %v missing %q", names, want)
+		}
+	}
+	// Mentioning yourself is never what you meant.
+	if containsString(names, fakerc.Username) {
+		t.Errorf("candidates %v include the logged-in user", names)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}

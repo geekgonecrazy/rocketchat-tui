@@ -20,6 +20,25 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		return m.handleReactPickerKey(msg)
 	}
 
+	// The mention completer claims its navigation keys before the global
+	// bindings do, for the same reason the emoji one does below.
+	if m.mentions.active() {
+		switch pressed {
+		case "up", "ctrl+p":
+			m.mentions.move(-1)
+			return m, nil
+		case "down", "ctrl+n":
+			m.mentions.move(1)
+			return m, nil
+		case "tab", "enter":
+			return m.acceptMention()
+		case "esc":
+			m.mentions.close()
+			m.rebuildBody()
+			return m, nil
+		}
+	}
+
 	// The completer claims its navigation keys before the global bindings do:
 	// tab would otherwise cycle focus rather than accept a suggestion.
 	if m.picker.mode == pickerComplete {
@@ -224,11 +243,16 @@ func (m chatModel) handleComposerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 	// Grow the box with the message, up to a few lines.
 	m.composer.SetHeight(clamp(strings.Count(after, "\n")+1, 1, 4))
 
-	// The completer follows the text rather than being summoned by a key, so it
-	// has to be recomputed on every edit.
+	// The completers follow the text rather than being summoned by a key, so they
+	// have to be recomputed on every edit.
 	if after != before {
-		m.picker.syncCompletion(after)
-		m.rebuildBody() // the picker changes how much room the body has
+		m.mentions.sync(after, m.members)
+		if m.mentions.active() {
+			m.picker.close()
+		} else {
+			m.picker.syncCompletion(after)
+		}
+		m.rebuildBody() // the list changes how much room the body has
 	}
 
 	// Typing indicators follow actual edits, the way the web client does it.
@@ -267,6 +291,10 @@ func (m *chatModel) openRoom(roomID string) tea.Cmd {
 	m.composer.SetHeight(1)
 	m.focus = focusComposer
 	m.composer.Focus()
+	m.mentions.close()
+	// Candidates are per room; the previous room's people must not be offered
+	// here while this room's roster loads.
+	m.members = nil
 
 	// Keep the sidebar cursor on the room we just opened.
 	for i, room := range m.visible {
@@ -293,6 +321,7 @@ func (m chatModel) send() (chatModel, tea.Cmd) {
 	m.core.Send(m.activeRoom, threadID, text)
 	m.composer.Reset()
 	m.composer.SetHeight(1)
+	m.mentions.close()
 	m.pinnedToBottom = true
 	m.scrollToBottom()
 	return m, nil
@@ -366,6 +395,22 @@ func (m chatModel) acceptCompletion() (chatModel, tea.Cmd) {
 	}
 	m.composer.SetValue(completed)
 	m.picker.close()
+	m.rebuildBody()
+	if m.activeRoom != "" {
+		m.core.UserTyping(m.activeRoom)
+	}
+	return m, nil
+}
+
+// acceptMention replaces the "@prefix" being typed with the chosen username.
+func (m chatModel) acceptMention() (chatModel, tea.Cmd) {
+	completed, ok := m.mentions.complete(m.composer.Value())
+	if !ok {
+		m.mentions.close()
+		return m, nil
+	}
+	m.composer.SetValue(completed)
+	m.mentions.close()
 	m.rebuildBody()
 	if m.activeRoom != "" {
 		m.core.UserTyping(m.activeRoom)

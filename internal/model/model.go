@@ -206,6 +206,21 @@ func (m Message) SystemText() string {
 	}
 }
 
+// Member is someone who can be mentioned in a room.
+type Member struct {
+	Username string
+	Name     string // display name, may be empty
+}
+
+// Label renders a member for a candidate list: the username first, since that
+// is what gets typed and inserted, with the real name as context.
+func (m Member) Label() string {
+	if m.Name == "" || strings.EqualFold(m.Name, m.Username) {
+		return "@" + m.Username
+	}
+	return "@" + m.Username + "  " + m.Name
+}
+
 // TypingUsers is a room's current typists, excluding the local user.
 type TypingUsers []string
 
