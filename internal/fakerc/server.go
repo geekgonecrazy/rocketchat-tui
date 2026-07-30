@@ -1,0 +1,343 @@
+// Package fakerc is a stand-in Rocket.Chat server for tests: REST endpoints
+// plus a DDP websocket that speaks the same frames a real server does,
+// including EJSON `{"$date": ms}` timestamps.
+package fakerc
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+// AuthToken and UserID are the credentials the fake server accepts.
+const (
+	AuthToken = "test-auth-token"
+	UserID    = "self-user-id"
+	Username  = "tester"
+	Password  = "hunter2"
+	TOTPCode  = "424242"
+)
+
+// Notification is a typing notification the client sent us.
+type Notification struct {
+	EventName string
+	Username  string
+	Typing    bool
+}
+
+// SentMessage is a message the client posted.
+type SentMessage struct {
+	RoomID   string
+	Text     string
+	ThreadID string
+}
+
+// wsConn serializes writes to one websocket. gorilla panics on concurrent
+// writes, and both request handling and broadcasts write to the same socket.
+type wsConn struct {
+	ws *websocket.Conn
+	mu sync.Mutex
+}
+
+func (c *wsConn) write(payload []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ws.WriteMessage(websocket.TextMessage, payload)
+}
+
+// Server is a fake Rocket.Chat instance.
+type Server struct {
+	*httptest.Server
+
+	// RequireTOTP makes the first password login fail with totp-required.
+	RequireTOTP bool
+
+	mu            sync.Mutex
+	rooms         []map[string]any
+	subscriptions []map[string]any
+	messages      []map[string]any
+	threads       []map[string]any
+	conns         []*wsConn
+	notifications []Notification
+	sent          []SentMessage
+	readRooms     []string
+	nextID        int
+	t             *testing.T
+}
+
+// New starts a fake server. It is shut down when the test ends.
+func New(t *testing.T) *Server {
+	t.Helper()
+	s := &Server{t: t}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/login", s.handleLogin)
+	mux.HandleFunc("/api/v1/me", s.authed(s.handleMe))
+	mux.HandleFunc("/api/v1/subscriptions.get", s.authed(s.handleSubscriptions))
+	mux.HandleFunc("/api/v1/rooms.get", s.authed(s.handleRooms))
+	mux.HandleFunc("/api/v1/rooms.info", s.authed(s.handleRoomInfo))
+	mux.HandleFunc("/api/v1/channels.history", s.authed(s.handleHistory))
+	mux.HandleFunc("/api/v1/groups.history", s.authed(s.handleHistory))
+	mux.HandleFunc("/api/v1/im.history", s.authed(s.handleHistory))
+	mux.HandleFunc("/api/v1/chat.syncMessages", s.authed(s.handleSyncMessages))
+	mux.HandleFunc("/api/v1/chat.getThreadsList", s.authed(s.handleThreadsList))
+	mux.HandleFunc("/api/v1/chat.getThreadMessages", s.authed(s.handleThreadMessages))
+	mux.HandleFunc("/api/v1/chat.getMessage", s.authed(s.handleGetMessage))
+	mux.HandleFunc("/api/v1/chat.sendMessage", s.authed(s.handleSendMessage))
+	mux.HandleFunc("/api/v1/subscriptions.read", s.authed(s.handleMarkRead))
+	mux.HandleFunc("/websocket", s.handleWebSocket)
+
+	s.Server = httptest.NewServer(mux)
+	t.Cleanup(s.Close)
+	return s
+}
+
+// Close shuts the server and every open websocket down.
+func (s *Server) Close() {
+	s.mu.Lock()
+	conns := s.conns
+	s.conns = nil
+	s.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.ws.Close()
+	}
+	s.Server.Close()
+}
+
+// ---- fixtures ---------------------------------------------------------------
+
+// AddRoom registers a room. roomType is one of c, p, d.
+func (s *Server) AddRoom(id, roomType, name string, extra map[string]any) {
+	room := map[string]any{
+		"_id":         id,
+		"t":           roomType,
+		"name":        name,
+		"fname":       name,
+		"_updatedAt":  isoNow(),
+		"usersCount":  3,
+		"topic":       "",
+		"ro":          false,
+		"archived":    false,
+		"description": "",
+	}
+	for k, v := range extra {
+		room[k] = v
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rooms = append(s.rooms, room)
+}
+
+// AddSubscription registers the user's view of a room.
+func (s *Server) AddSubscription(roomID, roomType, name string, unread, mentions int, lastSeen time.Time, extra map[string]any) {
+	sub := map[string]any{
+		"_id":           "sub-" + roomID,
+		"rid":           roomID,
+		"t":             roomType,
+		"name":          name,
+		"fname":         name,
+		"open":          true,
+		"alert":         unread > 0,
+		"unread":        unread,
+		"userMentions":  mentions,
+		"groupMentions": 0,
+		"f":             false,
+		"_updatedAt":    isoNow(),
+	}
+	if !lastSeen.IsZero() {
+		sub["ls"] = lastSeen.UTC().Format(time.RFC3339Nano)
+	}
+	for k, v := range extra {
+		sub[k] = v
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.subscriptions = append(s.subscriptions, sub)
+}
+
+// AddMessage registers a stored message.
+func (s *Server) AddMessage(id, roomID, username, text string, at time.Time, extra map[string]any) {
+	msg := s.buildMessage(id, roomID, username, text, at, extra)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages = append(s.messages, msg)
+	if count, ok := msg["tcount"].(int); ok && count > 0 {
+		s.threads = append(s.threads, msg)
+	}
+}
+
+// PromoteToThreadParent marks an existing message as a thread parent, the way
+// the server does once someone replies to it.
+func (s *Server) PromoteToThreadParent(messageID string, count int, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, msg := range s.messages {
+		if msg["_id"] != messageID {
+			continue
+		}
+		msg["tcount"] = count
+		msg["tlm"] = at.UTC().Format(time.RFC3339Nano)
+		for _, existing := range s.threads {
+			if existing["_id"] == messageID {
+				return
+			}
+		}
+		s.threads = append(s.threads, msg)
+		return
+	}
+}
+
+func (s *Server) buildMessage(id, roomID, username, text string, at time.Time, extra map[string]any) map[string]any {
+	msg := map[string]any{
+		"_id":        id,
+		"rid":        roomID,
+		"msg":        text,
+		"ts":         at.UTC().Format(time.RFC3339Nano),
+		"_updatedAt": at.UTC().Format(time.RFC3339Nano),
+		"u": map[string]any{
+			"_id":      "user-" + username,
+			"username": username,
+			"name":     strings.ToUpper(username[:1]) + username[1:],
+		},
+	}
+	for k, v := range extra {
+		msg[k] = v
+	}
+	return msg
+}
+
+// ---- realtime pushes --------------------------------------------------------
+
+// PushMessage broadcasts a new message on stream-room-messages, using the
+// EJSON date encoding a real server sends over DDP.
+func (s *Server) PushMessage(id, roomID, username, text string, at time.Time, extra map[string]any) {
+	msg := map[string]any{
+		"_id":        id,
+		"rid":        roomID,
+		"msg":        text,
+		"ts":         map[string]any{"$date": at.UTC().UnixMilli()},
+		"_updatedAt": map[string]any{"$date": at.UTC().UnixMilli()},
+		"u": map[string]any{
+			"_id":      "user-" + username,
+			"username": username,
+			"name":     username,
+		},
+	}
+	for k, v := range extra {
+		msg[k] = v
+	}
+
+	s.mu.Lock()
+	s.messages = append(s.messages, s.buildMessage(id, roomID, username, text, at, extra))
+	s.mu.Unlock()
+
+	s.broadcast(map[string]any{
+		"msg":        "changed",
+		"collection": "stream-room-messages",
+		"id":         "id",
+		"fields":     map[string]any{"eventName": roomID, "args": []any{msg}},
+	})
+}
+
+// PushTyping broadcasts a typing notification in the modern user-activity shape.
+func (s *Server) PushTyping(roomID, username string, typing bool) {
+	activities := []any{}
+	if typing {
+		activities = append(activities, "user-typing")
+	}
+	s.broadcast(map[string]any{
+		"msg":        "changed",
+		"collection": "stream-notify-room",
+		"id":         "id",
+		"fields": map[string]any{
+			"eventName": roomID + "/user-activity",
+			"args":      []any{username, activities, map[string]any{}},
+		},
+	})
+}
+
+// PushLegacyTyping broadcasts the older [username, bool] typing shape.
+func (s *Server) PushLegacyTyping(roomID, username string, typing bool) {
+	s.broadcast(map[string]any{
+		"msg":        "changed",
+		"collection": "stream-notify-room",
+		"id":         "id",
+		"fields": map[string]any{
+			"eventName": roomID + "/typing",
+			"args":      []any{username, typing},
+		},
+	})
+}
+
+// PushSubscription broadcasts changed unread counts.
+func (s *Server) PushSubscription(roomID string, unread, mentions int) {
+	s.broadcast(map[string]any{
+		"msg":        "changed",
+		"collection": "stream-notify-user",
+		"id":         "id",
+		"fields": map[string]any{
+			"eventName": UserID + "/subscriptions-changed",
+			"args": []any{"updated", map[string]any{
+				"_id":           "sub-" + roomID,
+				"rid":           roomID,
+				"unread":        unread,
+				"userMentions":  mentions,
+				"groupMentions": 0,
+				"alert":         unread > 0,
+				"open":          true,
+				"t":             "c",
+				"_updatedAt":    map[string]any{"$date": time.Now().UnixMilli()},
+			}},
+		},
+	})
+}
+
+func (s *Server) broadcast(frame map[string]any) {
+	payload, err := json.Marshal(frame)
+	if err != nil {
+		s.t.Errorf("fakerc: encode frame: %v", err)
+		return
+	}
+	s.mu.Lock()
+	conns := append([]*wsConn(nil), s.conns...)
+	s.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.write(payload)
+	}
+}
+
+// ConnCount reports how many websocket clients are connected.
+func (s *Server) ConnCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.conns)
+}
+
+// Notifications returns the typing notifications the client sent.
+func (s *Server) Notifications() []Notification {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Notification(nil), s.notifications...)
+}
+
+// SentMessages returns the messages the client posted.
+func (s *Server) SentMessages() []SentMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]SentMessage(nil), s.sent...)
+}
+
+// ReadRooms returns the rooms the client marked read.
+func (s *Server) ReadRooms() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.readRooms...)
+}
+
+func isoNow() string { return time.Now().UTC().Format(time.RFC3339Nano) }

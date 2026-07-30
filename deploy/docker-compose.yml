@@ -1,0 +1,79 @@
+# Minimal Rocket.Chat stack for local development against rctui.
+#
+# This is a trimmed version of the official compose file
+# (https://go.rocket.chat/i/docker-compose.yml), which also ships Traefik,
+# Prometheus exporters and Let's Encrypt wiring. None of that is useful on a
+# laptop, and the official file hard-fails without LETSENCRYPT_EMAIL set, so
+# this one exposes Rocket.Chat directly on port 3000 instead.
+#
+#   docker compose up -d
+#   docker compose logs -f rocketchat     # first boot takes a minute or two
+#   ./rctui -server http://localhost:3000
+#
+# Rocket.Chat requires MongoDB to be a replica set even for a single node,
+# which is what the mongodb-init service sets up.
+
+name: rctui-dev
+
+services:
+  mongodb:
+    image: docker.io/mongodb/mongodb-community-server:${MONGODB_VERSION:-8.0}-ubi8
+    restart: unless-stopped
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # Initiates the single-node replica set, then exits. Safe to re-run: it checks
+  # for an existing config first, so `compose up` on an existing volume is a
+  # no-op rather than an error.
+  mongodb-init:
+    image: docker.io/mongodb/mongodb-community-server:${MONGODB_VERSION:-8.0}-ubi8
+    restart: "no"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        if mongosh "mongodb://mongodb:27017/?directConnection=true" --quiet \
+             --eval 'rs.status().ok' >/dev/null 2>&1; then
+          echo "replica set already initialised"
+        else
+          echo "initialising replica set rs0"
+          mongosh "mongodb://mongodb:27017/?directConnection=true" --quiet --eval \
+            'rs.initiate({_id: "rs0", members: [{_id: 0, host: "mongodb:27017"}]})'
+        fi
+
+  rocketchat:
+    image: registry.rocket.chat/rocketchat/rocket.chat:${RELEASE:-8.0.1}
+    restart: unless-stopped
+    depends_on:
+      mongodb-init:
+        condition: service_completed_successfully
+    environment:
+      ROOT_URL: ${ROOT_URL:-http://localhost:3000}
+      PORT: 3000
+      MONGO_URL: mongodb://mongodb:27017/rocketchat?replicaSet=rs0
+      MONGO_OPLOG_URL: mongodb://mongodb:27017/local?replicaSet=rs0
+      DEPLOY_METHOD: docker
+      DEPLOY_PLATFORM: compose
+      # Seed an admin and skip the browser setup wizard, so the server is
+      # immediately usable from a terminal client.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASS: ${ADMIN_PASS:-changeme123}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      OVERWRITE_SETTING_Show_Setup_Wizard: completed
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+
+volumes:
+  mongodb_data:
+    driver: local

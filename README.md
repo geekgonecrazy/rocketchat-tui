@@ -1,0 +1,235 @@
+# rctui
+
+A terminal client for Rocket.Chat, written in Go with
+[Bubbletea](https://github.com/charmbracelet/bubbletea) and
+[Lipgloss](https://github.com/charmbracelet/lipgloss).
+
+It ships its own minimal Rocket.Chat client rather than depending on the
+deprecated Go SDK: REST for anything fetched or paginated, DDP over WebSocket
+purely for realtime push. State is cached in SQLite, so launching shows your
+rooms and history immediately instead of an empty screen.
+
+## Features
+
+- Login with username/password (with 2FA) or a personal access token; the
+  session is cached so you only sign in once
+- Sidebar ordered by message activity and nothing else, so positions stay put;
+  unread and mentions show as weight and badges rather than by reordering
+- Channels, private groups, DMs, teams, and discussions, each with its own sigil
+- Message history with scroll-back paging
+- A **new messages** divider frozen at where you left off, and the view scrolls
+  to it when you open a room
+- Live typing indicators, sent and received the way the web client does it
+- Thread view: browse a room's threads, read a thread, and reply into it
+- Works offline against the local cache; reconnects and resyncs automatically
+
+## Install
+
+```sh
+go install github.com/geekgonecrazy/rocketchat-tui/cmd/rctui@latest
+```
+
+That puts an `rctui` binary in `$(go env GOPATH)/bin` — add it to your `PATH` if
+it is not there already. Then just:
+
+```sh
+rctui
+```
+
+The first run asks for your server and credentials; after that it goes straight
+to your rooms.
+
+Building from a clone instead:
+
+```sh
+git clone https://github.com/geekgonecrazy/rocketchat-tui
+cd rocketchat-tui
+go build -o rctui ./cmd/rctui
+./rctui
+```
+
+Requires Go 1.24 or newer. The SQLite driver is pure Go
+(`modernc.org/sqlite`), so cross-compiling a static binary needs no cgo or C
+toolchain:
+
+```sh
+GOOS=darwin GOARCH=arm64 go build -o rctui-darwin-arm64 ./cmd/rctui
+```
+
+Flags:
+
+| Flag | Purpose |
+| --- | --- |
+| `-server <url>` | Server address, overriding the saved one |
+| `-db <path>` | Cache database location |
+| `-log <path>` | Write debug logs to a file (never to the terminal) |
+| `-logout` | Forget saved credentials and exit |
+
+Config lives at `$XDG_CONFIG_HOME/rctui/config.json` (mode 0600, it holds an
+auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
+
+## Keys
+
+| Key | Action |
+| --- | --- |
+| `tab` / `shift+tab` | Move focus: rooms → messages → composer |
+| `↑ ↓` or `k j` | Move within the focused pane |
+| `enter` | Rooms: open · Messages: open or start a thread · Composer: send |
+| `ctrl+t` | Thread list for this room — works while typing |
+| `alt+enter` | Newline in the composer |
+| `/` | Filter the room list |
+| `g` | Load older messages |
+| `u` | Jump to the unread line |
+| `t` | Thread list (messages pane only) |
+| `esc` | Close thread / clear filter / leave the composer |
+| `ctrl+r` | Resync now |
+| `ctrl+l` | Mark the current room read |
+| `?` | Toggle help |
+| `ctrl+c` | Quit |
+
+The mouse works too: click a room to open it, click a message to select it,
+click a `↳ N replies` line to open that thread, and scroll with the wheel.
+
+### Starting a thread
+
+Any message can anchor one, whether or not it already has replies:
+
+1. Select the message — `tab` to the messages pane and use `k`/`j`, or just
+   click it.
+2. Press `enter`. The pane switches to that thread and the composer follows.
+3. Type and press `enter`; the reply is posted with the message as its parent.
+
+`ctrl+t` lists every thread in the room, from any focus. `esc` goes back to the
+timeline.
+
+## Architecture
+
+```
+cmd/rctui/              the binary: flags, config, logging, program startup
+internal/rocket/        the mini SDK: REST + DDP, no other internal deps
+internal/model/         view-facing domain types (Room, Message, Kind)
+internal/store/         SQLite cache: rooms, subscriptions, messages, paging state
+internal/app/           headless core: owns SDK + cache + all state, emits events
+internal/ui/            Bubbletea models: input handling and widget state
+internal/ui/render/     pure functions: view state → strings, no Bubbletea
+internal/fakerc/        fake Rocket.Chat server (REST + DDP) used by the tests
+deploy/                 docker compose for a local Rocket.Chat to develop against
+docs/api-deviations.md  where the live API differs from its documentation
+test/integration/       live-server tests (separate module, build-tagged)
+```
+
+Three boundaries do the heavy lifting:
+
+**The core is headless.** `app.Core` runs on a single goroutine and is the only
+writer of application state, so no field needs a mutex. Every mutation arrives as
+an action closure on a channel; network calls run off-loop and report back the
+same way. It publishes `app.Event` values and never renders anything.
+
+**The UI is a pure consumer.** It never calls the SDK, never touches SQLite, and
+shares no mutable state with the core. Events arrive as Bubbletea messages via a
+re-arming command that reads one event per `Update`, so a burst of server
+activity cannot block a redraw and a slow redraw cannot block the network.
+
+**Rendering is separate from the refresh loop.** `internal/ui/render` is pure
+functions over explicit view-state structs — no Bubbletea import, no I/O, no
+clock beyond formatting. Layout is recomputed when state changes, not on every
+frame: the model holds pre-rendered lines plus the anchors (`MessageLine`,
+`UnreadLine`) that scrolling needs, and `View` just slices a window out of them.
+
+See `docs/api-deviations.md` for the full catalogue of API-versus-documentation
+discrepancies. The most important ones:
+
+### Rocket.Chat specifics worth knowing
+
+- **Two date encodings.** REST sends RFC3339 strings, DDP sends
+  `{"$date": millis}`. `rocket.Timestamp` decodes both.
+- **Typing has two stream shapes.** Older servers use `<rid>/typing` with
+  `[username, bool]`; current ones use `<rid>/user-activity` with
+  `[username, ["user-typing"], {}]`. The client subscribes to both and emits on
+  both, so indicators work regardless of server version.
+- **History endpoints are type-specific.** `channels.history`, `groups.history`,
+  and `im.history` are selected from the room's `t`. Teams and discussions are
+  ordinary `c`/`p` rooms, so they need no special case.
+- **Thread replies are hidden from the timeline** unless the author ticked "also
+  send to channel" (`tshow`), matching the web client.
+- **Room kind is derived, not given.** A discussion has `prid`; a team main room
+  has `teamMain`; both are also `c` or `p`. `model.RoomKind` resolves this once.
+- **Sidebar order must not use the subscription's `_updatedAt`.** The server
+  bumps it on any subscription change, marking a room read included, so ordering
+  by it makes a room jump to the top of the list simply because you opened it.
+  Activity means the room's `lm` and the newest message actually cached.
+- **The unread divider uses the subscription's `ls`**, captured when the room is
+  opened and held there, so it does not slide down as you read or when the room
+  is marked read.
+- **Unread state has three shapes.** `alert: true` with `unread: 0` is normal
+  (counters disabled) and means "something is new, no count"; `ls` may be absent
+  entirely, or years stale. So a room can be unread with no number and no anchor,
+  and any count derived by tallying messages after `ls` is really just a report of
+  how much history you loaded.
+- **Client and server clocks disagree** — 94 seconds of skew measured in
+  development. Unread state compares a client-held marker against server
+  timestamps, so the marker is anchored to server data, never to `time.Now()`.
+
+## Running a server
+
+`deploy/docker-compose.yml` is a minimal MongoDB + Rocket.Chat stack for local
+use, with the admin account seeded and the setup wizard skipped:
+
+```sh
+cd deploy && docker compose up -d
+rctui -server http://localhost:3000
+```
+
+See `deploy/README.md` for details, the official upstream compose file, and the
+testcontainers-based integration suite in `test/integration`.
+
+## Tests
+
+```sh
+go test ./...
+go test ./... -race
+```
+
+`internal/fakerc` is a working fake server — REST endpoints plus a DDP websocket
+that speaks real frames — so the suite covers the whole stack without a live
+Rocket.Chat instance. The end-to-end tests in `internal/ui` drive an actual
+Bubbletea program through login, room switching, live pushes, typing indicators,
+threads, and sending.
+
+To see the rendered layout:
+
+```sh
+go test ./internal/ui/ -run TestFullScreenSnapshot -v
+```
+
+### Against a real server
+
+Two build-tagged suites run against a live Rocket.Chat instance. Both skip
+unless the environment is supplied, so neither affects `go test ./...`.
+
+```sh
+# API-level: login, sync, DDP, history, threads, typing
+cd test/integration
+RC_SERVER=https://chat.example.com RC_USER=me RC_PASS=…   go test -tags livetest -v
+
+# add RC_ALLOW_WRITE=1 to also exercise sending, and to create/reuse the
+# dedicated test fixture (a team, a channel in it, and a discussion)
+
+# UI-level: drives the real TUI and prints each rendered frame
+RC_SERVER=… RC_USER=… RC_PASS=…   go test -tags livetest -run TestLiveScreens -v ./internal/ui/
+```
+
+Live tests only ever write into their own fixture rooms, never into
+pre-existing ones. The fixture is recorded in
+`test/integration/testdata/live-fixture.json` and reused across runs.
+
+`docs/api-deviations.md` tracks every place the live API differs from the
+published documentation, with the confirmation status of each. Several bugs in
+this client were found only by running against a real server — that document is
+where those lessons live.
+
+## Not implemented
+
+Presence (deliberately out of scope), file uploads, emoji reactions authoring,
+message editing and deletion, search, admin functions, and E2E-encrypted rooms
+(their messages arrive as ciphertext).
