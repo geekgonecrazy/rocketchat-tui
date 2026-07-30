@@ -53,11 +53,8 @@ type ThreadUpdated struct {
 	Replies  []model.Message
 }
 
->>>>>>> 1
+// MembersUpdated is who the composer may offer for an @ mention in a room:
 // the room's fetched roster merged with everyone who has spoken there.
-======= 1 [AZA7VWAJ]
-func (MembersUpdated) isAppEvent()    {}
-<<<<<<< 1
 type MembersUpdated struct {
 	RoomID  string
 	Members []model.Member
@@ -117,10 +114,3 @@ func computeTotals(rooms []model.Room) Totals {
 	}
 	return totals
 }
-// MembersUpdated is who the composer may offer for an @ mention in a room:
-// the room's fetched roster merged with everyone who has spoken there.
-type MembersUpdated struct {
-	RoomID  string
-	Members []model.Member
-}
-

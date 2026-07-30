@@ -318,46 +318,6 @@ func TestMarkRead(t *testing.T) {
 		t.Errorf("server recorded reads %v", read)
 	}
 }
-func TestRoomMembersUsesTheEndpointForTheRoomType(t *testing.T) {
-	server := fakerc.New(t)
-	server.AddMembers("room-1", "dana", "erin")
-
-	client := newClient(t, server)
-	client.SetCredentials(rocket.Credentials{
-		ServerURL: server.URL, UserID: fakerc.UserID, AuthToken: fakerc.AuthToken,
-	})
-
-	ctx := context.Background()
-	members, err := client.RoomMembers(ctx, "room-1", rocket.RoomTypeChannel, 50)
-	if err != nil {
-		t.Fatalf("RoomMembers: %v", err)
-	}
-	if len(members) != 2 || members[0].Username != "dana" {
-		t.Fatalf("members = %+v, want dana and erin", members)
-	}
-
-	for _, roomType := range []string{rocket.RoomTypePrivate, rocket.RoomTypeDirect} {
-		if _, err := client.RoomMembers(ctx, "room-1", roomType, 50); err != nil {
-			t.Fatalf("RoomMembers(%s): %v", roomType, err)
-		}
-	}
-
-	want := []string{"/api/v1/channels.members", "/api/v1/groups.members", "/api/v1/im.members"}
-	got := server.MemberPaths()
-	if len(got) != len(want) {
-		t.Fatalf("member paths = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("member path %d = %q, want %q", i, got[i], want[i])
-		}
-	}
-
-	// A room whose type we do not know must fail loudly rather than guess.
-	if _, err := client.RoomMembers(ctx, "room-1", "", 50); err == nil {
-		t.Error("expected an error for a missing room type")
-	}
-}
 
 func TestRoomMembersUsesTheEndpointForTheRoomType(t *testing.T) {
 	server := fakerc.New(t)

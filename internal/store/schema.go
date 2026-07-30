@@ -79,15 +79,6 @@ var migrations = []string{
 		synced_at   INTEGER NOT NULL DEFAULT 0
 	);
 	`,
-	-- Who can be mentioned in a room. Cached so the composer's @ completer has
-	-- candidates to offer before — or without — a round trip.
-	CREATE TABLE IF NOT EXISTS room_members (
-		room_id  TEXT NOT NULL,
-		username TEXT NOT NULL,
-		name     TEXT NOT NULL DEFAULT '',
-		PRIMARY KEY (room_id, username)
-	);
-	`,
 	`
 	-- Who can be mentioned in a room. Cached so the composer's @ completer has
 	-- candidates to offer before — or without — a round trip.

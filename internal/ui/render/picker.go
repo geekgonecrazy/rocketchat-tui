@@ -4,48 +4,6 @@ import (
 	"strings"
 
 	"github.com/geekgonecrazy/rocketchat-tui/internal/emoji"
-// MentionPickerState is the input for the composer's "@" completer.
-type MentionPickerState struct {
-	// Query is what the user has typed after the "@".
-	Query string
-	// Matches are the candidates, best first.
-	Matches []model.Member
-	// Cursor is the highlighted index.
-	Cursor int
-	Width  int
-	// MaxRows bounds the height; the list scrolls to keep the cursor visible.
-	MaxRows int
-}
-
-// MentionPicker renders the candidate list as a compact box, floating just
-// above the composer the way the emoji completer does.
-func MentionPicker(theme Theme, state MentionPickerState) []string {
-	if state.Width <= 0 || state.MaxRows <= 0 || len(state.Matches) == 0 {
-		return nil
-	}
-
-	rows := min(state.MaxRows, len(state.Matches))
-	offset := 0
-	if state.Cursor >= rows {
-		offset = state.Cursor - rows + 1
-	}
-	if offset > len(state.Matches)-rows {
-		offset = max(0, len(state.Matches)-rows)
-	}
-
-	lines := make([]string, 0, rows)
-	for row := 0; row < rows; row++ {
-		index := offset + row
-		label := state.Matches[index].Label()
-		if index == state.Cursor {
-			lines = append(lines, theme.SidebarSelected.Render(Pad("  "+label, state.Width)))
-			continue
-		}
-		lines = append(lines, theme.Muted.Render(Pad("  "+label, state.Width)))
-	}
-	return lines
-}
-
 	"github.com/geekgonecrazy/rocketchat-tui/internal/model"
 )
 
