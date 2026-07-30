@@ -371,6 +371,58 @@ effect in reverse. Reading a room clears its unread, so it drops out of the
 unread group and moves away from where the user just found it. Unread is now
 carried entirely by weight and badges.
 
+## 17. Uploading a file is two endpoints on new servers and one on old ones
+
+**Status:** defensive · **Severity:** the feature does not exist on one side or
+the other
+
+There are two ways to put a file in a room, and which one a server has depends
+on its version:
+
+| Route | Shape |
+| --- | --- |
+| `POST /api/v1/rooms.media/:rid` then `POST /api/v1/rooms.mediaConfirm/:rid/:fileId` | multipart bytes, then a JSON message body — what the current web client uses |
+| `POST /api/v1/rooms.upload/:rid` | one multipart request carrying the file *and* the message fields |
+
+Neither is documented as superseding the other, and the REST reference still
+describes `rooms.upload`. A server old enough to lack the media pair answers
+`404` for an unknown API route — not a `400` naming a bad parameter, which is
+what most wrong requests get.
+
+**What we do:** `rocket.Client.Upload` tries the media pair, and on a `404`
+(and only a `404`, so that a refused *file* is not mistaken for a missing
+*route*) falls back to `rooms.upload`. The verdict is cached on the client, so
+an old server costs one wasted round trip per session rather than one per file.
+The fallback re-opens the file: the first attempt streams the body from a pipe,
+and a consumed pipe cannot be replayed.
+
+**Also unstated:** `rooms.mediaConfirm` is not obliged to echo the stored
+message back. `Core.sendUploads` treats a reply with no message id as "ask the
+room what it now holds" rather than caching a row with no id — the same shape of
+defence `Core.Edit` applies to `chat.update` (§ open questions).
+
+## 18. The multipart part's `Content-Type` is load-bearing
+
+**Status:** defensive · **Severity:** silently unrenderable uploads, or refusal
+
+The upload endpoints take the file part's declared type at face value: it is
+checked against `FileUpload_MediaTypeWhiteList` and then stored on the
+attachment. Nothing in the documentation says the client must set it, and Go's
+`multipart.Writer.CreateFormFile` hardcodes `application/octet-stream` — so the
+obvious implementation uploads every image as a non-image.
+
+The two failure modes differ in how loudly they fail. On a server whose
+whitelist is permissive the upload succeeds and the picture arrives as an opaque
+download that no client, including the web one, will draw inline. On a server
+whose whitelist is the default `image/*,audio/*,video/*,application/*` it is
+refused outright.
+
+**What we do:** build the part header by hand with a type resolved from the
+extension, falling back to sniffing the first 512 bytes when there is no
+extension. Extension first, because `http.DetectContentType` knows nothing about
+most document formats and answers `application/octet-stream` for them — which is
+the answer that gets the upload refused. See `rocket.DetectMIME`.
+
 ---
 
 ## Open questions
@@ -403,6 +455,14 @@ Things not yet settled against a live server:
   now sends this form (`U` on a selected message), so the first live use will
   answer it: if the server refuses that too, the mark-unread is rolled back and
   the server's message is shown, and only the room-level form is worth keeping.
+- **Whether the live target has `rooms.media`.** 8.4 should (§17), so the
+  fallback to `rooms.upload` is the untested branch against a real server. The
+  fake covers both, but only the fake has been made to 404 the route.
+- **Whether `rooms.mediaConfirm` accepts `description`.** The web client sends
+  one, but its presence in that endpoint's body schema is unverified, and a
+  strict validator would reject the whole upload for an unknown property. We
+  send only `msg`, `tmid` and `tshow`, so a caption distinct from the message
+  text is not offered.
 - **Where the server puts `ls` when marking unread**, exactly. We anchor to the
   message before the first unread one, which places the divider correctly; if
   the server instead stores the unread message's own timestamp, the subscription

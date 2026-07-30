@@ -554,14 +554,23 @@ func (c *Core) Edit(roomID, messageID, text string) {
 }
 
 // Send posts a message to a room, optionally into a thread.
-func (c *Core) Send(roomID, threadID, text string) {
+//
+// Uploads, if any, are what the composer had queued. Rocket.Chat has no notion
+// of a message with files bolted on: each file is its own message, and the text
+// rides on one of them. So a send with files is a run of uploads rather than a
+// single call, and text with no files is the plain path below.
+func (c *Core) Send(roomID, threadID, text string, uploads ...Upload) {
 	c.enqueue(func(c *Core) {
-		if roomID == "" || text == "" {
+		if roomID == "" || (text == "" && len(uploads) == 0) {
 			return
 		}
 		c.stopTyping(roomID)
 
 		c.background(func(ctx context.Context) error {
+			if len(uploads) > 0 {
+				return c.sendUploads(ctx, roomID, threadID, text, uploads)
+			}
+
 			sent, err := c.client.Send(ctx, rocket.SendOptions{
 				RoomID:   roomID,
 				Text:     text,
@@ -573,15 +582,18 @@ func (c *Core) Send(roomID, threadID, text string) {
 			if err := c.store.SaveMessages([]rocket.Message{sent}); err != nil {
 				return err
 			}
-			c.enqueue(func(c *Core) {
-				if c.currentRoom == roomID {
-					c.emitTimeline(roomID)
-				}
-				if threadID != "" && c.currentThread == threadID {
-					c.emitThread(roomID, threadID)
-				}
-			})
+			c.enqueue(func(c *Core) { c.refreshAfterSend(roomID, threadID) })
 			return nil
 		})
 	})
+}
+
+// refreshAfterSend re-publishes whichever panes the new message belongs in.
+func (c *Core) refreshAfterSend(roomID, threadID string) {
+	if c.currentRoom == roomID {
+		c.emitTimeline(roomID)
+	}
+	if threadID != "" && c.currentThread == threadID {
+		c.emitThread(roomID, threadID)
+	}
 }

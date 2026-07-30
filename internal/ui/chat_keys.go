@@ -20,6 +20,13 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		return m.handleReactPickerKey(msg)
 	}
 
+	// The attach prompt has borrowed the composer, so it takes input ahead of
+	// everything else: tab completes a path here rather than cycling focus, and
+	// enter queues a file rather than sending a message.
+	if m.attach.open {
+		return m.handleAttachKey(msg)
+	}
+
 	// The mention completer claims its navigation keys before the global
 	// bindings do, for the same reason the emoji one does below.
 	if m.mentions.active() {
@@ -84,6 +91,13 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 			return m.toggleThreadList()
 		}
 		return m, nil
+	case "ctrl+o":
+		// Not ctrl+u, however well "upload" reads: the textarea binds that to
+		// delete-before-cursor, and taking it would cost a line-kill that people
+		// who use one use constantly.
+		return m.beginAttach("")
+	case "ctrl+x":
+		return m.dropLastUpload()
 	case "tab":
 		m.focus = (m.focus + 1) % 3
 		cmd := m.syncComposerFocus()
@@ -326,6 +340,11 @@ func (m *chatModel) openRoom(roomID string) tea.Cmd {
 	m.focus = focusComposer
 	m.composer.Focus()
 	m.mentions.close()
+	// Attachments were queued for the room being left, along with the draft that
+	// went with them. Carrying them into a different conversation is how a file
+	// ends up somewhere it was never meant to go.
+	m.uploads = nil
+	m.attach = attachPrompt{}
 	// Candidates are per room; the previous room's people must not be offered
 	// here while this room's roster loads.
 	m.members = nil
@@ -344,15 +363,27 @@ func (m *chatModel) openRoom(roomID string) tea.Cmd {
 }
 
 func (m chatModel) send() (chatModel, tea.Cmd) {
+	if m.activeRoom == "" || m.room.ReadOnly {
+		return m, nil
+	}
+
+	// "/upload …" is a way of attaching a file, not a message to post. It is
+	// caught here rather than at keystroke time so the whole line is in hand.
+	if path, ok := uploadCommand(m.composer.Value()); ok {
+		return m.attachFromCommand(path)
+	}
+
 	text := strings.TrimSpace(m.composer.Value())
-	if text == "" || m.activeRoom == "" || m.room.ReadOnly {
+	if text == "" && len(m.uploads) == 0 {
 		return m, nil
 	}
 	threadID := ""
 	if m.mode == bodyThread {
 		threadID = m.threadID
 	}
-	m.core.Send(m.activeRoom, threadID, text)
+
+	m.core.Send(m.activeRoom, threadID, text, m.uploads...)
+	m.uploads = nil
 	m.composer.Reset()
 	m.composer.SetHeight(1)
 	m.mentions.close()
@@ -420,6 +451,10 @@ func (m chatModel) openSelectedThread() (chatModel, tea.Cmd) {
 	m.focus = focusComposer
 	m.composer.Focus()
 	m.composer.Reset()
+	// The draft is discarded on the way in, and the files attached to it go with
+	// it: they were meant for the timeline, not this thread.
+	m.uploads = nil
+	m.attach = attachPrompt{}
 	m.core.OpenThread(m.activeRoom, threadID)
 	m.rebuildBody()
 	return m, textarea.Blink

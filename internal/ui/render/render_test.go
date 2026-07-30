@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -573,5 +574,102 @@ func TestReactionCountAndOwnership(t *testing.T) {
 	}
 	if reaction.Mine {
 		t.Error("Mine should default to false")
+	}
+}
+
+func TestComposerShowsQueuedAttachmentsAboveTheInput(t *testing.T) {
+	lines := Composer(plainTheme(), ComposerState{
+		Width:       60,
+		View:        "numbers attached",
+		Attachments: []string{"diagram.png (84 KB)", "notes.txt (1.2 KB)"},
+	})
+
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"diagram.png (84 KB)", "notes.txt (1.2 KB)", "numbers attached"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("composer missing %q:\n%s", want, joined)
+		}
+	}
+	// The chip line sits directly above the input, so what enter will send is
+	// read top to bottom in one place.
+	chips, input := -1, -1
+	for i, line := range lines {
+		if strings.Contains(line, "diagram.png") {
+			chips = i
+		}
+		if strings.Contains(line, "numbers attached") {
+			input = i
+		}
+	}
+	if chips < 0 || input != chips+1 {
+		t.Errorf("chips at %d, input at %d — want the chips immediately above", chips, input)
+	}
+}
+
+// A half-shown queue reads as the whole queue, which would make the composer
+// lie about what enter is going to send.
+func TestComposerCollapsesAnAttachmentListThatDoesNotFit(t *testing.T) {
+	lines := Composer(plainTheme(), ComposerState{
+		Width: 34,
+		View:  "hi",
+		Attachments: []string{
+			"a-very-long-file-name.png (84 KB)",
+			"another-long-one.txt (1.2 KB)",
+			"and-a-third.csv (40 KB)",
+		},
+	})
+
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "3 files attached") {
+		t.Errorf("want a count when the names do not fit:\n%s", joined)
+	}
+	if strings.Contains(joined, "another-long-one.txt") {
+		t.Error("a partial list is worse than a count")
+	}
+	for i, line := range lines {
+		if Width(line) > 34 {
+			t.Errorf("line %d is %d cells wide, want <= 34", i, Width(line))
+		}
+	}
+}
+
+func TestPathMatchesPacksNamesAndCountsTheRest(t *testing.T) {
+	many := []string{
+		"alpha.png", "bravo.png", "charlie.png", "delta.png", "echo.png",
+		"foxtrot.png", "golf.png", "hotel.png", "india.png", "juliet.png",
+	}
+	lines := PathMatches(plainTheme(), PathMatchesState{Matches: many, Width: 40, MaxRows: 2})
+
+	if len(lines) > 2 {
+		t.Fatalf("got %d rows, want at most 2", len(lines))
+	}
+	for i, line := range lines {
+		if Width(line) > 40 {
+			t.Errorf("row %d is %d cells wide, want <= 40", i, Width(line))
+		}
+	}
+	// Names that did not fit are counted rather than dropped, so the list never
+	// implies the choice is narrower than it is — and the count has to stay
+	// accurate even though making room for it drops another name or two.
+	joined := strings.Join(lines, "\n")
+	shown := 0
+	for _, name := range many {
+		if strings.Contains(joined, name) {
+			shown++
+		}
+	}
+	var counted int
+	if _, err := fmt.Sscanf(strings.TrimSpace(joined[strings.LastIndex(joined, "+"):]), "+%d more", &counted); err != nil {
+		t.Fatalf("no overflow marker in:\n%s", joined)
+	}
+	if shown+counted != len(many) {
+		t.Errorf("%d names shown + %d counted = %d, want %d:\n%s",
+			shown, counted, shown+counted, len(many), joined)
+	}
+}
+
+func TestPathMatchesIsEmptyWithNothingToSuggest(t *testing.T) {
+	if lines := PathMatches(plainTheme(), PathMatchesState{Width: 40, MaxRows: 2}); lines != nil {
+		t.Errorf("want no rows for no matches, got %v", lines)
 	}
 }

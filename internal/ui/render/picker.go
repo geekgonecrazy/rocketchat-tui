@@ -121,6 +121,90 @@ func MentionPicker(theme Theme, state MentionPickerState) []string {
 	return lines
 }
 
+// PathMatchesState is the input for the attach prompt's completion hint.
+type PathMatchesState struct {
+	// Matches are the directory entries the typed path could still become.
+	Matches []string
+	Width   int
+	// MaxRows bounds the height. Names that do not fit are counted rather than
+	// dropped, so the list never implies the choice is narrower than it is.
+	MaxRows int
+}
+
+// PathMatches renders completion candidates as a packed strip.
+//
+// Unlike the emoji and mention completers this list has no cursor: a path is
+// completed with tab the way a shell does it, and enter belongs to the prompt.
+// Names are therefore packed across the line rather than given a row each,
+// which fits far more of them into the two or three rows this can spare.
+func PathMatches(theme Theme, state PathMatchesState) []string {
+	if state.Width <= 2 || state.MaxRows <= 0 || len(state.Matches) == 0 {
+		return nil
+	}
+
+	const gap = 2
+	budget := state.Width - 2 // the two-space indent every row carries
+
+	var (
+		rows  [][]string
+		row   []string
+		width int
+	)
+	for index, name := range state.Matches {
+		need := Width(name)
+		if len(row) > 0 {
+			need += gap
+		}
+
+		if len(row) > 0 && width+need > budget {
+			if len(rows) == state.MaxRows-1 {
+				// Last row: say how many names did not make it rather than
+				// silently stopping partway through the alphabet.
+				row = withOverflow(row, width, len(state.Matches)-index, budget, gap)
+				break
+			}
+			rows = append(rows, row)
+			row, width = nil, 0
+			need = Width(name)
+		}
+		row = append(row, name)
+		width += need
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+
+	lines := make([]string, 0, len(rows))
+	for _, names := range rows {
+		packed := "  " + strings.Join(names, strings.Repeat(" ", gap))
+		lines = append(lines, theme.Muted.Render(Pad(Truncate(packed, state.Width), state.Width)))
+	}
+	return lines
+}
+
+// withOverflow appends a "+N more" marker to the last row, dropping names off
+// the end until it fits.
+//
+// The marker has to survive intact: a row truncated mid-count says nothing, and
+// a row truncated just after the last name that fits claims to be the whole
+// list. Every name dropped to make room is one more the marker counts.
+func withOverflow(row []string, width, remaining, budget, gap int) []string {
+	for {
+		marker := "+" + itoa(remaining) + " more"
+		need := Width(marker)
+		if len(row) > 0 {
+			need += gap
+		}
+		if width+need <= budget || len(row) == 0 {
+			return append(row, marker)
+		}
+		last := row[len(row)-1]
+		row = row[:len(row)-1]
+		width -= Width(last) + gap
+		remaining++
+	}
+}
+
 // itoa avoids pulling strconv into this file for one call.
 func itoa(n int) string {
 	if n == 0 {

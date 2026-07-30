@@ -32,9 +32,15 @@ func (c Credentials) Valid() bool {
 type Client struct {
 	baseURL *url.URL
 	http    *http.Client
+	// upload is the same client without a whole-request deadline; see
+	// newUploadClient.
+	upload *http.Client
 
 	mu    sync.RWMutex
 	creds Credentials
+	// legacyUpload records that this server has no rooms.media route, so the
+	// second and later files of a session skip straight to rooms.upload.
+	legacyUpload bool
 }
 
 // NewClient builds a client for serverURL, which may be given as
@@ -49,8 +55,24 @@ func NewClient(serverURL string) (*Client, error) {
 		http: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		creds: Credentials{ServerURL: u.String()},
+		upload: newUploadClient(),
+		creds:  Credentials{ServerURL: u.String()},
 	}, nil
+}
+
+// newUploadClient is the client uploads go out on.
+//
+// http.Client.Timeout bounds the whole exchange, body included, so the 30s that
+// suits a JSON call would kill a large file on a slow link partway through — and
+// the right bound is unknowable anyway, because it depends on a file size we do
+// not get to choose. Instead nothing caps the transfer as long as it is
+// progressing, and the per-stage timeouts below catch a host that has stopped
+// answering. Cancellation is the caller's context.
+func newUploadClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 60 * time.Second
+	transport.TLSHandshakeTimeout = 15 * time.Second
+	return &http.Client{Transport: transport}
 }
 
 func normalizeServerURL(raw string) (*url.URL, error) {
@@ -120,6 +142,16 @@ type request struct {
 	body     any
 	headers  map[string]string
 	noAuth   bool
+
+	// reader is a pre-encoded body, used by multipart uploads so a file can be
+	// streamed off disk instead of marshalled into memory. It takes precedence
+	// over body, and contentType must be set alongside it.
+	reader      io.Reader
+	contentType string
+
+	// slow opts out of the default whole-request deadline. Only uploads set it:
+	// see Client.upload for why a byte budget cannot be a time budget.
+	slow bool
 }
 
 // do performs a REST call and decodes the JSON body into out.
@@ -137,13 +169,19 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		}
 		bodyReader = bytes.NewReader(encoded)
 	}
+	if r.reader != nil {
+		bodyReader = r.reader
+	}
 
 	req, err := http.NewRequestWithContext(ctx, r.method, endpoint, bodyReader)
 	if err != nil {
 		return fmt.Errorf("rocket: build %s request: %w", r.endpoint, err)
 	}
 	req.Header.Set("Accept", "application/json")
-	if r.body != nil {
+	switch {
+	case r.reader != nil:
+		req.Header.Set("Content-Type", r.contentType)
+	case r.body != nil:
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if !r.noAuth {
@@ -158,7 +196,11 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		req.Header.Set(k, v)
 	}
 
-	resp, err := c.http.Do(req)
+	httpClient := c.http
+	if r.slow {
+		httpClient = c.upload
+	}
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("rocket: %s: %w", r.endpoint, err)
 	}

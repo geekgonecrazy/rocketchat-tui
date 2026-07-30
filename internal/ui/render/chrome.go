@@ -96,8 +96,12 @@ type ComposerState struct {
 	ReplyingTo string
 	// Editing marks the box as rewriting a posted message rather than composing
 	// a new one.
-	Editing     bool
-	ReadOnly    bool
+	Editing  bool
+	ReadOnly bool
+	// Attachments are the queued files, already labelled with their sizes. They
+	// are shown above the input because they will be sent with whatever is typed
+	// there, and a user needs to see what is riding along before pressing enter.
+	Attachments []string
 	Placeholder string
 }
 
@@ -124,6 +128,10 @@ func Composer(theme Theme, state ComposerState) []string {
 			Truncate("  ↳ replying in thread: "+state.ReplyingTo, state.Width)))
 	}
 
+	if len(state.Attachments) > 0 {
+		lines = append(lines, theme.ThreadHint.Render(attachmentLine(state.Attachments, state.Width)))
+	}
+
 	prompt := state.Prompt
 	if prompt == "" {
 		prompt = "› "
@@ -136,6 +144,20 @@ func Composer(theme Theme, state ComposerState) []string {
 		lines = append(lines, strings.Repeat(" ", Width(prompt))+line)
 	}
 	return lines
+}
+
+// attachmentLine renders the queued files on one line.
+//
+// When the names do not fit it collapses to a count rather than truncating the
+// list, because a half-shown queue reads as the whole queue: the point of the
+// line is to say exactly what enter is about to send.
+func attachmentLine(labels []string, width int) string {
+	full := "  📎 " + strings.Join(labels, " · ")
+	if Width(full) <= width {
+		return Pad(full, width)
+	}
+	summary := "  📎 " + itoa(len(labels)) + " files attached"
+	return Pad(Truncate(summary, width), width)
 }
 
 // StatusState is the input for the bottom bar.
@@ -199,6 +221,8 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"v", "view the selected message's image full-screen"},
 		{"s", "save its attachment to your downloads"},
 		{"o", "open its attachment in a desktop app"},
+		{"ctrl+o", "attach a file to send with your message"},
+		{"ctrl+x", "remove the last file you attached"},
 		{"esc", "close thread / clear filter / leave the composer"},
 		{"ctrl+r", "resync now"},
 		{"ctrl+l", "mark the current room read"},
@@ -251,6 +275,23 @@ func HelpOverlay(theme Theme, width int) []string {
 			"click it) and press enter, then type your reply.", max(1, width-4))),
 		"  "+theme.Muted.Render(Truncate(
 			"ctrl+t lists every thread in the room. esc returns to the timeline.", max(1, width-4))),
+	)
+
+	lines = append(lines,
+		"",
+		theme.Title.Render("  Attachments"),
+		"  "+theme.Muted.Render(Truncate(
+			"ctrl+o turns the composer into a file prompt: type a path, tab", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"completes it, ~ means your home directory, enter attaches. Typing", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"/upload <path> does the same without the prompt.", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"Attach as many as you like — they sit above the composer and", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"nothing is uploaded until you send the message. ctrl+x removes the", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"last one; leaving the room drops them all.", max(1, width-4))),
 	)
 
 	lines = append(lines,

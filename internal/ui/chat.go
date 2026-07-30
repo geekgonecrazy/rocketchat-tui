@@ -120,6 +120,13 @@ type chatModel struct {
 	pending       pendingAttachment
 	downloadDir   string
 	imageProtocol termimg.Protocol
+
+	// uploads are the files queued for the next send, in the order they were
+	// attached. Nothing here has left the machine yet: like the web client, a
+	// file is only posted when the message it belongs to is.
+	uploads []app.Upload
+	// attach is the path prompt, open while a file is being picked.
+	attach attachPrompt
 }
 
 func newChatModel(core *app.Core, theme render.Theme, username, serverLabel, downloadDir string) chatModel {
@@ -174,6 +181,9 @@ func (m chatModel) composerHeight() int {
 	if m.editing() || (m.threadID != "" && m.mode == bodyThread) {
 		lines++ // edit banner, or thread context line
 	}
+	if len(m.uploads) > 0 {
+		lines++ // queued attachments
+	}
 	return lines
 }
 
@@ -181,6 +191,9 @@ func (m chatModel) composerHeight() int {
 // none is open. Only one can be open at a time: an "@" token and a ":" token
 // cannot both be what is being typed.
 func (m chatModel) pickerHeight() int {
+	if m.attach.open {
+		return len(m.attachSuggestions())
+	}
 	if m.mentions.active() {
 		return min(mentionRows, max(1, len(m.mentions.matches)))
 	}
@@ -379,7 +392,9 @@ func (m chatModel) View() string {
 	}
 
 	var picker []string
-	if m.mentions.active() {
+	if m.attach.open {
+		picker = m.attachSuggestions()
+	} else if m.mentions.active() {
 		picker = render.MentionPicker(m.theme, render.MentionPickerState{
 			Query:   m.mentions.query,
 			Matches: m.mentions.matches,
@@ -403,12 +418,13 @@ func (m chatModel) View() string {
 	}
 
 	composer := render.Composer(m.theme, render.ComposerState{
-		Width:      m.width,
-		View:       m.composer.View(),
-		Prompt:     m.composerPrompt(),
-		ReplyingTo: m.threadContext(),
-		Editing:    m.editing(),
-		ReadOnly:   m.room.ReadOnly,
+		Width:       m.width,
+		View:        m.composer.View(),
+		Prompt:      m.composerPrompt(),
+		ReplyingTo:  m.threadContext(),
+		Editing:     m.editing(),
+		ReadOnly:    m.room.ReadOnly,
+		Attachments: m.uploadLabels(),
 	})
 
 	return render.Chat(m.theme, render.Frame{
@@ -426,6 +442,11 @@ func (m chatModel) View() string {
 }
 
 func (m chatModel) composerPrompt() string {
+	if m.attach.open {
+		// The box holds a path, not a message. Nothing else in the composer says
+		// so, and pressing enter means something different while it does.
+		return "📎 "
+	}
 	if m.editing() {
 		// A different prompt, not just a banner: the box now holds text that is
 		// already posted, and losing track of that is how you edit by accident.
@@ -482,10 +503,16 @@ func (m chatModel) statusBar() string {
 
 	hints := "enter thread · r react · ctrl+t threads · ? help"
 	switch {
+	case m.attach.open:
+		hints = "tab complete · enter attach · esc cancel"
 	case m.editing():
 		hints = "enter save · esc cancel · ↑↓ another message"
+	case len(m.uploads) > 0:
+		// What to do about the queue displaces the general hints: it is the one
+		// thing on screen the user has no other way of learning how to undo.
+		hints = "enter send with files · ctrl+o attach another · ctrl+x remove last"
 	case m.focus == focusComposer:
-		hints = "enter send · ↑ edit last · @mention · :emoji · ctrl+t threads · ? help"
+		hints = "enter send · ctrl+o attach · ↑ edit last · @mention · ctrl+t threads · ? help"
 	case m.focus == focusRooms:
 		hints = "enter open · / filter · ctrl+t threads · ? help"
 	}

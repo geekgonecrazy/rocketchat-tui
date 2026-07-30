@@ -2,9 +2,12 @@ package fakerc
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -525,6 +528,171 @@ func writeJSON(w http.ResponseWriter, status int, body map[string]any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// ---- uploads ----------------------------------------------------------------
+
+// handleRoomsMedia is the first half of the modern upload flow: it takes the
+// bytes and hands back a file id, posting nothing to the room yet.
+func (s *Server) handleRoomsMedia(w http.ResponseWriter, r *http.Request) {
+	if s.NoMediaRoute {
+		// What a server predating this route answers, and the signal a client
+		// uses to fall back to rooms.upload.
+		writeJSON(w, http.StatusNotFound, map[string]any{
+			"success": false, "error": "unknown API endpoint",
+		})
+		return
+	}
+	roomID := strings.TrimPrefix(r.URL.Path, "/api/v1/rooms.media/")
+	upload, err := readUpload(r, roomID, "media")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	if s.RejectUpload {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false, "error": "error-invalid-file-type", "errorType": "error-invalid-file-type",
+		})
+		return
+	}
+
+	s.mu.Lock()
+	s.nextID++
+	fileID := "file-" + strconv.Itoa(s.nextID)
+	// Held, not recorded: the upload only becomes real when it is confirmed, so
+	// an abandoned first half must not show up as a sent file.
+	s.pendingMedia[fileID] = upload
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"file":    map[string]any{"_id": fileID, "url": "/file-upload/" + fileID + "/" + upload.Filename},
+	})
+}
+
+// handleRoomsMediaConfirm is the second half: it turns a held file into a
+// message.
+func (s *Server) handleRoomsMediaConfirm(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/rooms.mediaConfirm/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "bad path"})
+		return
+	}
+	roomID, fileID := parts[0], parts[1]
+
+	var body struct {
+		Text     string `json:"msg"`
+		ThreadID string `json:"tmid"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	s.mu.Lock()
+	upload, ok := s.pendingMedia[fileID]
+	if !ok {
+		s.mu.Unlock()
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false, "error": "error-invalid-file", "errorType": "error-invalid-file",
+		})
+		return
+	}
+	delete(s.pendingMedia, fileID)
+	upload.Text, upload.ThreadID = body.Text, body.ThreadID
+	msg := s.recordUpload(roomID, fileID, upload)
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": msg})
+}
+
+// handleRoomsUpload is the older single-request flow, where the message rides
+// along as form fields next to the file.
+func (s *Server) handleRoomsUpload(w http.ResponseWriter, r *http.Request) {
+	roomID := strings.TrimPrefix(r.URL.Path, "/api/v1/rooms.upload/")
+	upload, err := readUpload(r, roomID, "upload")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	if s.RejectUpload {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success": false, "error": "error-invalid-file-type", "errorType": "error-invalid-file-type",
+		})
+		return
+	}
+	upload.Text = r.FormValue("msg")
+	upload.ThreadID = r.FormValue("tmid")
+
+	s.mu.Lock()
+	s.nextID++
+	fileID := "file-" + strconv.Itoa(s.nextID)
+	msg := s.recordUpload(roomID, fileID, upload)
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{"success": true, "message": msg})
+}
+
+// readUpload pulls the file part out of a multipart request, keeping the
+// Content-Type the client declared on it rather than re-sniffing the bytes.
+func readUpload(r *http.Request, roomID, route string) (Upload, error) {
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		return Upload{}, fmt.Errorf("bad multipart body: %w", err)
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		return Upload{}, fmt.Errorf("no file part: %w", err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return Upload{}, fmt.Errorf("read file part: %w", err)
+	}
+	return Upload{
+		RoomID:   roomID,
+		Route:    route,
+		Filename: header.Filename,
+		MIME:     header.Header.Get("Content-Type"),
+		Bytes:    data,
+	}, nil
+}
+
+// recordUpload files the upload away and builds the message a real server
+// would create for it, attachment and all. The caller holds s.mu.
+func (s *Server) recordUpload(roomID, fileID string, upload Upload) map[string]any {
+	upload.RoomID = roomID
+	s.uploads = append(s.uploads, upload)
+
+	s.nextID++
+	link := "/file-upload/" + fileID + "/" + upload.Filename
+	attachment := map[string]any{
+		"title":      upload.Filename,
+		"title_link": link,
+		"type":       "file",
+	}
+	// Real servers key an image attachment off image_url rather than title_link,
+	// which is what tells a client it can be drawn rather than only downloaded.
+	if strings.HasPrefix(upload.MIME, "image/") {
+		attachment["image_url"] = link
+		attachment["image_type"] = upload.MIME
+	}
+	extra := map[string]any{
+		"attachments": []any{attachment},
+		"file":        map[string]any{"_id": fileID, "name": upload.Filename, "type": upload.MIME},
+	}
+	if upload.ThreadID != "" {
+		extra["tmid"] = upload.ThreadID
+	}
+
+	msg := s.buildMessage("sent-"+strconv.Itoa(s.nextID), roomID, Username, upload.Text, time.Now(), extra)
+	msg["u"] = map[string]any{"_id": UserID, "username": Username, "name": "Test Tester"}
+	s.messages = append(s.messages, msg)
+	return msg
+}
+
+// Uploads is every file the client has posted, in order.
+func (s *Server) Uploads() []Upload {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Upload(nil), s.uploads...)
 }
 
 // handleFileUpload serves an attachment. Like a real server it demands

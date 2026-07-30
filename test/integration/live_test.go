@@ -10,8 +10,12 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1042,4 +1046,94 @@ func TestLiveEmojiRendering(t *testing.T) {
 		}
 	}
 	t.Logf("%d messages, %d reaction lines", len(messages), len(view.ReactionLine))
+}
+
+// TestLiveUpload posts a file into the self-DM and reports which of the two
+// upload routes the server took.
+//
+// This is the branch the fake cannot settle. `rocket.Client.Upload` prefers
+// `rooms.media` + `rooms.mediaConfirm` and falls back to `rooms.upload` on a
+// 404 (deviations §17); which one a given server has is a version question, and
+// the answer here is what turns that entry from defensive into confirmed.
+func TestLiveUpload(t *testing.T) {
+	if os.Getenv("RC_ALLOW_WRITE") != "1" {
+		t.Skip("set RC_ALLOW_WRITE=1 to allow this test to upload a file")
+	}
+	client, me := liveClient(t)
+	ctx := context.Background()
+
+	room, err := client.CreateDirectMessage(ctx, me.Username)
+	if err != nil {
+		t.Fatalf("im.create (self-DM): %v", err)
+	}
+
+	// A real PNG, so the server's media-type whitelist and its image handling
+	// are both exercised rather than sidestepped by an inert blob.
+	path := filepath.Join(t.TempDir(), "rctui-live-upload.png")
+	if err := os.WriteFile(path, testPNG(), 0o600); err != nil {
+		t.Fatalf("write test png: %v", err)
+	}
+
+	stamp := time.Now().Format("15:04:05")
+	sent, err := client.Upload(ctx, rocket.UploadOptions{
+		RoomID: room.ID,
+		Path:   path,
+		Text:   "rctui live upload " + stamp,
+	})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	t.Logf("uploaded id=%s msg=%q", sent.ID, sent.Msg)
+
+	// Whether the confirm call echoes the stored message back is unstated; the
+	// core resyncs when it does not, so an empty reply is a note, not a failure.
+	if sent.ID == "" {
+		t.Log("NOTE: the upload returned no message — Core.sendUploads resyncs in this case")
+	}
+
+	// Find it in history and check it arrived as something a client can draw.
+	history, err := client.History(ctx, rocket.HistoryQuery{
+		RoomID: room.ID, RoomType: room.Type, Count: 10,
+	})
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	var found model.Message
+	for _, raw := range history {
+		converted := model.FromRocketMessage(raw, me.ID, me.Username)
+		for _, attachment := range converted.Attachments {
+			if attachment.Filename() == "rctui-live-upload.png" {
+				found = converted
+				t.Logf("attachment: source=%q mime=%q image=%v",
+					attachment.Source, attachment.MIME, attachment.IsImage())
+				if !attachment.IsImage() {
+					t.Error("the PNG did not come back as an image — check the declared Content-Type (§18)")
+				}
+			}
+		}
+	}
+	if found.ID == "" {
+		t.Error("the uploaded file did not appear in history")
+	}
+
+	// A second upload on the same client proves the route decision is stable,
+	// whichever way it went.
+	if _, err := client.Upload(ctx, rocket.UploadOptions{RoomID: room.ID, Path: path}); err != nil {
+		t.Errorf("second upload: %v", err)
+	}
+}
+
+// testPNG is a small but genuine PNG, so the server decodes something real.
+func testPNG() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	for y := range 16 {
+		for x := range 16 {
+			img.Set(x, y, color.RGBA{R: uint8(x * 16), G: uint8(y * 16), B: 0x80, A: 0xff})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		panic("encode test png: " + err.Error())
+	}
+	return buf.Bytes()
 }

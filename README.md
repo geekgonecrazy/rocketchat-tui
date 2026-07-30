@@ -27,6 +27,8 @@ rooms and history immediately instead of an empty screen.
   type, and any message can be reacted to
 - Mentions: `@` autocompletes the people in the room, plus `@all` and `@here`;
   `#` autocompletes the rooms you are in
+- Send files: `ctrl+o` gives you a path prompt with tab-completion, attach as
+  many as you like, and nothing uploads until you send the message
 - Works offline against the local cache; reconnects and resyncs automatically
 
 ## Install
@@ -94,6 +96,8 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `v` | View the selected message's image full-screen |
 | `s` | Save the selected message's attachment to your downloads |
 | `o` | Open the selected message's attachment in a desktop app |
+| `ctrl+o` | Attach a file to send with your message |
+| `ctrl+x` | Remove the last file you attached |
 | `esc` | Close thread / clear filter / leave the composer |
 | `ctrl+r` | Resync now |
 | `ctrl+l` | Mark the current room read |
@@ -205,6 +209,46 @@ reach a PDF or a zip. Saved files land in `~/Downloads`, or wherever
 
 WebP and AVIF have no decoder in the Go standard library and rctui takes no
 dependency to add one, so those open externally rather than drawing.
+
+### Sending files
+
+`ctrl+o` turns the composer into a file prompt. Type a path — `tab` completes
+it, `~` means your home directory — and `enter` attaches the file:
+
+```
+  screenshot-one.png  screenshot-two.png  scratch/
+📎 ~/shots/screen
+```
+
+`esc` cancels and gives you back whatever you were writing. `/upload <path>`
+typed into the composer does the same thing without the prompt, which is handy
+when you already have the path on the clipboard; the path is taken verbatim, so
+a name with spaces in it needs no quoting.
+
+Attached files sit above the composer and go nowhere until you send:
+
+```
+  📎 diagram.png (84 KB) · perf-notes.txt (1.2 KB)
+› numbers attached, have a look
+```
+
+Attach as many as you like. `ctrl+x` removes the last one, and leaving the room
+drops the queue along with the draft it belonged to — they were meant for that
+conversation.
+
+Rocket.Chat has no notion of a message with files bolted onto it: each file is
+its own message. So sending three files posts three messages, in the order you
+attached them, and your text rides on the first. If a file is refused — the
+server has both a media-type whitelist and a size limit — the rest still go, and
+the status bar names the one that did not. Should every file be refused, the
+text is posted on its own rather than discarded: you watched it leave the
+composer, so it has to land somewhere.
+
+Each file is streamed off disk rather than read into memory, and it is sent with
+its real media type, worked out from the extension and confirmed against the
+first few hundred bytes when there is no extension to go on. That last part
+matters more than it sounds: an image uploaded as `application/octet-stream` is
+an image no client will ever draw inline.
 
 ### Starting a thread
 
@@ -376,9 +420,12 @@ cd internal/emoji && go generate
 
 ## Not implemented
 
-Presence (deliberately out of scope), file uploads, message editing and
-deletion, search, admin functions, and E2E-encrypted rooms (their messages
-arrive as ciphertext).
+Presence (deliberately out of scope), message deletion, search, admin
+functions, and E2E-encrypted rooms (their messages arrive as ciphertext).
+
+Uploads have no progress bar — a large file shows as `syncing` like any other
+request — no per-file description separate from the message text, and no retry:
+a refused file has to be attached again.
 
 Images are viewed full-screen rather than inline in the timeline: Bubbletea
 repaints by diffing lines and has no concept of an image cell, so an inline

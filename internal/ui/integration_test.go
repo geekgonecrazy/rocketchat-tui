@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -369,6 +370,76 @@ func TestEndToEndOpensThreadFromTimeline(t *testing.T) {
 		}
 		return false
 	})
+	r.quit()
+}
+
+// The behaviour the whole feature turns on: files queue in the composer and go
+// nowhere until the message they belong to is sent, and then they go as one
+// message each, in the order they were attached.
+func TestEndToEndAttachTwoFilesAndSendThemTogether(t *testing.T) {
+	server := fakerc.New(t)
+	server.AddRoom("room-1", "c", "general", nil)
+	server.AddSubscription("room-1", "c", "general", 0, 0, time.Now().Add(-time.Hour), nil)
+	server.AddMessage("m1", "room-1", "alice", "morning", time.Now().Add(-time.Minute), nil)
+
+	dir := t.TempDir()
+	png := filepath.Join(dir, "diagram.png")
+	if err := os.WriteFile(png, fakerc.FilePNG, 0o600); err != nil {
+		t.Fatalf("write png: %v", err)
+	}
+	txt := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(txt, []byte("some notes"), 0o600); err != nil {
+		t.Fatalf("write txt: %v", err)
+	}
+
+	r := newRunner(t, server, t.TempDir(), true)
+	r.waitForOutput("Rocket.Chat")
+	r.send(tea.KeyMsg{Type: tea.KeyCtrlT})
+	r.sendRunes(fakerc.AuthToken)
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+	r.waitForOutput("morning")
+
+	for _, path := range []string{png, txt} {
+		r.send(tea.KeyMsg{Type: tea.KeyCtrlO})
+		r.sendRunes(path)
+		r.send(tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	r.waitForOutput("diagram.png")
+	r.waitForOutput("notes.txt")
+
+	// Both are queued and visible. Nothing has been uploaded.
+	if got := server.Uploads(); len(got) != 0 {
+		t.Fatalf("attaching uploaded %d files; nothing should go out before send", len(got))
+	}
+
+	r.sendRunes("two things")
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	waitUntil(t, "both files uploaded", func() bool { return len(server.Uploads()) == 2 })
+	uploads := server.Uploads()
+
+	if uploads[0].Filename != "diagram.png" || uploads[1].Filename != "notes.txt" {
+		t.Errorf("uploaded %q then %q, want them in the order they were attached",
+			uploads[0].Filename, uploads[1].Filename)
+	}
+	// The image has to arrive declared as an image or no client will draw it.
+	if uploads[0].MIME != "image/png" {
+		t.Errorf("diagram.png declared as %q, want image/png", uploads[0].MIME)
+	}
+	if !strings.HasPrefix(uploads[1].MIME, "text/plain") {
+		t.Errorf("notes.txt declared as %q, want text/plain", uploads[1].MIME)
+	}
+	// One message's worth of text, on one of the files rather than on both.
+	if uploads[0].Text != "two things" {
+		t.Errorf("text = %q, want it carried on the first file", uploads[0].Text)
+	}
+	if uploads[1].Text != "" {
+		t.Errorf("second file carried %q; the text belongs to one message", uploads[1].Text)
+	}
+	if uploads[0].RoomID != "room-1" {
+		t.Errorf("room = %q, want room-1", uploads[0].RoomID)
+	}
+
 	r.quit()
 }
 

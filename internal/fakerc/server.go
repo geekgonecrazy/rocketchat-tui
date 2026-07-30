@@ -52,6 +52,22 @@ type UnreadMark struct {
 	MessageID string
 }
 
+// Upload is a file the client posted. Route records which of the two upload
+// flows carried it, since a client is expected to prefer one and fall back to
+// the other.
+type Upload struct {
+	RoomID   string
+	Route    string // "media" or "upload"
+	Filename string
+	// MIME is the Content-Type the client put on the file part, not one the
+	// server guessed. Getting this wrong is what makes an image arrive as an
+	// opaque download, so a test needs to see exactly what was sent.
+	MIME     string
+	Bytes    []byte
+	Text     string
+	ThreadID string
+}
+
 // wsConn serializes writes to one websocket. gorilla panics on concurrent
 // writes, and both request handling and broadcasts write to the same socket.
 type wsConn struct {
@@ -77,6 +93,12 @@ type Server struct {
 	// RejectEdit makes chat.update fail the way a server with editing disabled
 	// or time-limited does.
 	RejectEdit bool
+	// NoMediaRoute makes rooms.media 404, the way a server predating that route
+	// does, so a client's fallback to rooms.upload can be exercised.
+	NoMediaRoute bool
+	// RejectUpload makes both upload routes fail, standing in for a rejected
+	// media type or an oversized file.
+	RejectUpload bool
 
 	mu            sync.Mutex
 	rooms         []map[string]any
@@ -91,6 +113,8 @@ type Server struct {
 	edited        []EditedMessage
 	readRooms     []string
 	unreadMarks   []UnreadMark
+	uploads       []Upload
+	pendingMedia  map[string]Upload
 	fileRequests  int
 	nextID        int
 	t             *testing.T
@@ -99,7 +123,11 @@ type Server struct {
 // New starts a fake server. It is shut down when the test ends.
 func New(t *testing.T) *Server {
 	t.Helper()
-	s := &Server{t: t, members: make(map[string][]map[string]any)}
+	s := &Server{
+		t:            t,
+		members:      make(map[string][]map[string]any),
+		pendingMedia: make(map[string]Upload),
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/login", s.handleLogin)
@@ -121,6 +149,9 @@ func New(t *testing.T) *Server {
 	mux.HandleFunc("/api/v1/chat.update", s.authed(s.handleUpdateMessage))
 	mux.HandleFunc("/api/v1/subscriptions.read", s.authed(s.handleMarkRead))
 	mux.HandleFunc("/api/v1/subscriptions.unread", s.authed(s.handleMarkUnread))
+	mux.HandleFunc("/api/v1/rooms.media/", s.authed(s.handleRoomsMedia))
+	mux.HandleFunc("/api/v1/rooms.mediaConfirm/", s.authed(s.handleRoomsMediaConfirm))
+	mux.HandleFunc("/api/v1/rooms.upload/", s.authed(s.handleRoomsUpload))
 	mux.HandleFunc("/file-upload/", s.authed(s.handleFileUpload))
 	mux.HandleFunc("/websocket", s.handleWebSocket)
 
