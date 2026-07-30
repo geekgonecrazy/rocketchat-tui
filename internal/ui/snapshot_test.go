@@ -40,9 +40,9 @@ func TestFullScreenSnapshot(t *testing.T) {
 			{ID: "b", Username: "alice", Author: "Alice", Text: "Specifically the token refresh path.", At: base.Add(time.Minute)},
 			{ID: "c", Username: "bob", Author: "Bob", Text: "On it.", At: base.Add(5 * time.Minute),
 				ThreadCount: 3, ThreadLastAt: time.Now().Add(-10 * time.Minute),
-				Reactions: []model.Reaction{{Emoji: ":+1:", Usernames: []string{"alice", "carol"}}}},
+				Reactions: []model.Reaction{{Emoji: ":+1:", Usernames: []string{"alice", "carol"}, Mine: true}}},
 			{ID: "d", Username: "carol", Author: "Carol", SystemType: "uj", At: base.Add(10 * time.Minute)},
-			{ID: "e", Username: "carol", Author: "Carol", Text: "Left a few notes in the thread. Also attaching the perf numbers.", At: lastSeen.Add(time.Minute),
+			{ID: "e", Username: "carol", Author: "Carol", Text: "Left a few notes in the thread :tada: Also attaching the perf numbers.", At: lastSeen.Add(time.Minute),
 				Attachments: []model.Attachment{{Title: "perf-before-after.png", Text: "42% faster on cold start"}}},
 			{ID: "f", Username: "tester", Author: "Test Tester", Text: "Nice, I'll review after standup.", At: lastSeen.Add(3 * time.Minute), Own: true},
 		},
@@ -63,7 +63,7 @@ func TestFullScreenSnapshot(t *testing.T) {
 		"Today",                            // date separator
 		"new messages",                     // unread divider
 		"\u21b3 3 replies",                 // thread affordance
-		":+1: 2",                           // reactions
+		"\U0001f44d 2",                     // reactions render as glyphs
 		"\U0001f4ce perf-before-after.png", // attachment
 		"Carol joined the channel",         // system message
 		"alice and bob are typing\u2026",   // typing indicator

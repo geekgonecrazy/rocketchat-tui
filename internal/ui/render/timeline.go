@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/geekgonecrazy/rocketchat-tui/internal/emoji"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/model"
 )
 
@@ -39,14 +40,30 @@ type TimelineView struct {
 	// HintLine maps a line index to the message index whose thread affordance is
 	// drawn there, so a click on "↳ 3 replies" can open that thread directly.
 	HintLine map[int]int
+	// ReactionLine maps a line index to the message index whose reactions are
+	// drawn there, so a click can toggle one.
+	ReactionLine map[int]int
+	// ReactionSpans gives, for each reaction line, the cell range each reaction
+	// occupies, so a click can tell which one was hit.
+	ReactionSpans map[int][]ReactionSpan
+}
+
+// ReactionSpan locates one reaction chip within its line.
+type ReactionSpan struct {
+	// Emoji is the shortcode to toggle.
+	Emoji string
+	// Start and End are printable cell offsets, End exclusive.
+	Start, End int
 }
 
 // Timeline renders messages oldest-first into wrapped lines.
 func Timeline(theme Theme, state TimelineState) TimelineView {
 	view := TimelineView{
-		MessageLine: make([]int, len(state.Messages)),
-		UnreadLine:  -1,
-		HintLine:    map[int]int{},
+		MessageLine:   make([]int, len(state.Messages)),
+		UnreadLine:    -1,
+		HintLine:      map[int]int{},
+		ReactionLine:  map[int]int{},
+		ReactionSpans: map[int][]ReactionSpan{},
 	}
 	if state.Width <= 0 {
 		return view
@@ -112,7 +129,7 @@ func Timeline(theme Theme, state TimelineState) TimelineView {
 		view.MessageLine[index] = len(view.Lines)
 
 		if msg.IsSystem() {
-			emit(theme.SystemMsg.Render(Truncate("⋯ "+msg.SystemText(), contentWidth)) +
+			emit(theme.SystemMsg.Render(Truncate("⋯ "+emoji.Replace(msg.SystemText()), contentWidth)) +
 				" " + theme.Time.Render(Clock(msg.At)))
 			previous, havePrevious = msg, true
 			continue
@@ -131,14 +148,17 @@ func Timeline(theme Theme, state TimelineState) TimelineView {
 			emit(authorLine(theme, msg, contentWidth))
 		}
 
-		for _, line := range Wrap(msg.Text, contentWidth) {
+		for _, line := range Wrap(emoji.Replace(msg.Text), contentWidth) {
 			emit(theme.Body.Render(line))
 		}
 		for _, attachment := range msg.Attachments {
 			emit(theme.Attachment.Render(Truncate("📎 "+attachmentLabel(attachment), contentWidth)))
 		}
 		if len(msg.Reactions) > 0 {
-			emit(theme.Reaction.Render(Truncate(reactionLine(msg.Reactions), contentWidth)))
+			rendered, spans := reactionChips(theme, msg.Reactions, contentWidth)
+			view.ReactionLine[len(view.Lines)] = index
+			view.ReactionSpans[len(view.Lines)] = spans
+			emit(rendered)
 		}
 		if msg.IsThreadParent() {
 			view.HintLine[len(view.Lines)] = index
@@ -182,12 +202,51 @@ func threadHint(msg model.Message) string {
 	return hint
 }
 
-func reactionLine(reactions []model.Reaction) string {
-	parts := make([]string, 0, len(reactions))
-	for _, reaction := range reactions {
-		parts = append(parts, reaction.Emoji+" "+strconv.Itoa(len(reaction.Usernames)))
+// reactionChips renders reactions as glyph+count chips and reports where each
+// one sits, so the UI can map a click back to the reaction it hit.
+//
+// The gutter is two cells wide, and spans are measured from the start of the
+// content, so callers must offset by the gutter when hit-testing.
+func reactionChips(theme Theme, reactions []model.Reaction, width int) (string, []ReactionSpan) {
+	var (
+		b      strings.Builder
+		spans  []ReactionSpan
+		cursor int
+	)
+	for i, reaction := range reactions {
+		glyph := reaction.Emoji
+		if resolved, ok := emoji.Lookup(reaction.Emoji); ok {
+			glyph = resolved
+		}
+		chip := glyph + " " + strconv.Itoa(reaction.Count())
+
+		separator := ""
+		if i > 0 {
+			separator = "  "
+		}
+		if cursor+Width(separator)+Width(chip) > width {
+			break
+		}
+
+		b.WriteString(separator)
+		cursor += Width(separator)
+
+		style := theme.Reaction
+		if reaction.Mine {
+			// Own reactions are highlighted the way the web client does, so it is
+			// obvious which ones toggling will remove.
+			style = theme.ReactionMine
+		}
+		b.WriteString(style.Render(chip))
+
+		spans = append(spans, ReactionSpan{
+			Emoji: reaction.Emoji,
+			Start: cursor,
+			End:   cursor + Width(chip),
+		})
+		cursor += Width(chip)
 	}
-	return strings.Join(parts, "  ")
+	return b.String(), spans
 }
 
 func attachmentLabel(attachment model.Attachment) string {
@@ -224,7 +283,12 @@ func Thread(theme Theme, state ThreadState) TimelineView {
 		Cursor:   -1,
 	})
 
-	view := TimelineView{Lines: head.Lines, UnreadLine: -1, HintLine: map[int]int{}}
+	view := TimelineView{
+		Lines: head.Lines, UnreadLine: -1,
+		HintLine:      map[int]int{},
+		ReactionLine:  map[int]int{},
+		ReactionSpans: map[int][]ReactionSpan{},
+	}
 	label := "thread"
 	if count := len(state.Replies); count > 0 {
 		label = strconv.Itoa(count) + " replies"
@@ -281,9 +345,9 @@ func ThreadList(theme Theme, state ThreadListState) []string {
 		head := theme.Author.Render(Truncate(author, headWidth))
 		lines = append(lines, gutter+head+" "+theme.Faint.Render(meta))
 
-		preview := strings.ReplaceAll(thread.Text, "\n", " ")
+		preview := emoji.Replace(strings.ReplaceAll(thread.Text, "\n", " "))
 		if preview == "" && thread.IsSystem() {
-			preview = thread.SystemText()
+			preview = emoji.Replace(thread.SystemText())
 		}
 		lines = append(lines, gutter+theme.Muted.Render(Truncate(preview, width)))
 	}

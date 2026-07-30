@@ -15,11 +15,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/geekgonecrazy/rocketchat-tui/internal/app"
+	"github.com/geekgonecrazy/rocketchat-tui/internal/emoji"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/model"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/rocket"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/store"
@@ -122,7 +124,7 @@ func TestLiveProbe(t *testing.T) {
 		if i >= 5 {
 			break
 		}
-		converted := model.FromRocketMessage(msg, me.ID)
+		converted := model.FromRocketMessage(msg, me.ID, me.Username)
 		t.Logf("  %s  %-14s %-8s tcount=%d own=%v  %.60q",
 			shortTime(converted.At), converted.Username, converted.SystemType,
 			converted.ThreadCount, converted.Own, converted.Text)
@@ -259,7 +261,7 @@ func TestLiveRealtime(t *testing.T) {
 				}
 			case rocket.MessageEvent:
 				counts["message"]++
-				converted := model.FromRocketMessage(e.Message, me.ID)
+				converted := model.FromRocketMessage(e.Message, me.ID, me.Username)
 				t.Logf("  MESSAGE  room=%s %s: %.60q (ts=%s)",
 					e.Message.RoomID, converted.Username, converted.Text, shortTime(converted.At))
 				if converted.At.IsZero() {
@@ -352,7 +354,7 @@ func TestLiveWriteInSelfDM(t *testing.T) {
 	echo := awaitMessage(t, realtime, 30*time.Second, func(msg rocket.Message) bool {
 		return msg.ID == sent.ID
 	})
-	converted := model.FromRocketMessage(echo, me.ID)
+	converted := model.FromRocketMessage(echo, me.ID, me.Username)
 	t.Logf("echo received over DDP: %s: %q (ts=%s)", converted.Username, converted.Text, shortTime(converted.At))
 	if converted.At.IsZero() {
 		t.Error("DDP echo timestamp did not decode — check the $date handling")
@@ -908,4 +910,136 @@ func TestLiveSidebarOrderSurvivesOpeningRooms(t *testing.T) {
 		}
 	}
 	t.Log("order unchanged after opening every room")
+}
+
+// TestLiveReactions exercises chat.react against a real server, in the fixture
+// channel. It adds a reaction, confirms the server reports it, then removes it.
+func TestLiveReactions(t *testing.T) {
+	if os.Getenv("RC_ALLOW_WRITE") != "1" {
+		t.Skip("set RC_ALLOW_WRITE=1 to allow this test to post and react")
+	}
+	client, me := liveClient(t)
+	ctx := context.Background()
+
+	fixture, _, err := ensureFixture(ctx, client, time.Now())
+	if err != nil {
+		t.Fatalf("ensureFixture: %v", err)
+	}
+	roomID := fixture.ChannelID
+	if roomID == "" {
+		t.Skip("fixture has no channel")
+	}
+
+	sent, err := client.Send(ctx, rocket.SendOptions{
+		RoomID: roomID,
+		Text:   "reaction test " + time.Now().Format("15:04:05"),
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	// The bare name must work: callers hold "joy", the API wants ":joy:".
+	if err := client.React(ctx, sent.ID, "tada", true); err != nil {
+		t.Fatalf("chat.react add: %v", err)
+	}
+
+	withReaction := waitFor(t, "the reaction to appear on the message", func() (rocket.Message, bool) {
+		msg, err := client.GetMessage(ctx, sent.ID)
+		if err != nil {
+			return rocket.Message{}, false
+		}
+		_, ok := msg.Reactions[":tada:"]
+		return msg, ok
+	})
+
+	reaction := withReaction.Reactions[":tada:"]
+	t.Logf("server reports :tada: from %v", reaction.Usernames)
+	if len(reaction.Usernames) != 1 || reaction.Usernames[0] != me.Username {
+		t.Errorf("reaction usernames = %v, want [%s]", reaction.Usernames, me.Username)
+	}
+
+	// The shortcode form must be accepted too.
+	if err := client.React(ctx, sent.ID, ":rocket:", true); err != nil {
+		t.Fatalf("chat.react with colons: %v", err)
+	}
+
+	// And the whole thing must convert cleanly into the view model.
+	converted := model.FromRocketMessage(withReaction, me.ID, me.Username)
+	for _, r := range converted.Reactions {
+		if r.Emoji == ":tada:" && !r.Mine {
+			t.Error("our own reaction was not marked as ours")
+		}
+	}
+
+	// Now remove it.
+	if err := client.React(ctx, sent.ID, "tada", false); err != nil {
+		t.Fatalf("chat.react remove: %v", err)
+	}
+	waitFor(t, "the reaction to be removed", func() (bool, bool) {
+		msg, err := client.GetMessage(ctx, sent.ID)
+		if err != nil {
+			return false, false
+		}
+		_, still := msg.Reactions[":tada:"]
+		return true, !still
+	})
+	t.Log("reaction added and removed successfully")
+}
+
+// TestLiveEmojiRendering renders a real room's history through the real
+// renderer, so shortcodes and reactions can be checked against messages nobody
+// wrote for a test.
+func TestLiveEmojiRendering(t *testing.T) {
+	client, me := liveClient(t)
+	ctx := context.Background()
+
+	room := os.Getenv("RC_ROOM")
+	if room == "" {
+		room = "javascript"
+	}
+
+	subs, err := client.Subscriptions(ctx, time.Time{})
+	if err != nil {
+		t.Fatalf("subscriptions.get: %v", err)
+	}
+	var roomID, roomType string
+	for _, sub := range subs {
+		if sub.Name == room {
+			roomID, roomType = sub.RoomID, sub.Type
+		}
+	}
+	if roomID == "" {
+		t.Skipf("no room named %q on this server", room)
+	}
+
+	history, err := client.History(ctx, rocket.HistoryQuery{
+		RoomID: roomID, RoomType: roomType, Count: 25,
+	})
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+
+	messages := make([]model.Message, 0, len(history))
+	for i := len(history) - 1; i >= 0; i-- { // oldest first
+		messages = append(messages, model.FromRocketMessage(history[i], me.ID, me.Username))
+	}
+
+	view := render.Timeline(render.DefaultTheme(), render.TimelineState{
+		Messages: messages, Width: 76, Cursor: -1,
+	})
+
+	rendered := strings.Join(view.Lines, "\n")
+	t.Logf("#%s rendered:\n%s", room, rendered)
+
+	// Nothing should still be showing a raw shortcode where a glyph exists.
+	for _, msg := range messages {
+		for _, reaction := range msg.Reactions {
+			if glyph, ok := emoji.Lookup(reaction.Emoji); ok {
+				if !strings.Contains(rendered, glyph) {
+					t.Errorf("reaction %s did not render as %s", reaction.Emoji, glyph)
+				}
+			}
+		}
+	}
+	t.Logf("%d messages, %d reaction lines", len(messages), len(view.ReactionLine))
 }

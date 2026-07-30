@@ -17,7 +17,7 @@ func openStore(t *testing.T) *store.Store {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	s.SetIdentity("self")
+	s.SetIdentity("self", "me")
 	return s
 }
 
@@ -665,5 +665,48 @@ func TestNewMessageMovesARoomUp(t *testing.T) {
 			got = append(got, room.ID)
 		}
 		t.Errorf("a new message did not move the room up: %v", got)
+	}
+}
+
+// Reactions identify people by username, not id, so the store has to be told
+// both to know which reactions are the user's own.
+func TestReactionsAreMarkedAsOwn(t *testing.T) {
+	s := openStore(t)
+	if err := s.SaveMessages([]rocket.Message{{
+		ID: "m1", RoomID: "r1", Msg: "nice", Timestamp: ts(time.Now()),
+		User: rocket.User{ID: "other", Username: "alice"},
+		Reactions: map[string]rocket.Reaction{
+			":+1:":   {Usernames: []string{"alice", "me"}},
+			":tada:": {Usernames: []string{"alice"}},
+		},
+	}}); err != nil {
+		t.Fatalf("SaveMessages: %v", err)
+	}
+
+	timeline, err := s.RoomTimeline("r1", 10)
+	if err != nil {
+		t.Fatalf("RoomTimeline: %v", err)
+	}
+	if len(timeline) != 1 {
+		t.Fatalf("got %d messages", len(timeline))
+	}
+
+	found := map[string]model.Reaction{}
+	for _, reaction := range timeline[0].Reactions {
+		found[reaction.Emoji] = reaction
+	}
+	if got := found[":+1:"]; !got.Mine {
+		t.Errorf(":+1: should be marked as ours: %+v", got)
+	}
+	if got := found[":+1:"]; got.Count() != 2 {
+		t.Errorf(":+1: count = %d, want 2", got.Count())
+	}
+	if got := found[":tada:"]; got.Mine {
+		t.Errorf(":tada: should not be ours: %+v", got)
+	}
+
+	// Reactions render in a stable order regardless of map iteration.
+	if timeline[0].Reactions[0].Emoji != ":+1:" {
+		t.Errorf("reactions not sorted: %+v", timeline[0].Reactions)
 	}
 }

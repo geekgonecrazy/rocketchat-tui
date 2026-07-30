@@ -11,6 +11,7 @@ type Frame struct {
 	Header   []string
 	Sidebar  []string // SidebarWidth cells wide
 	Body     []string // already scrolled to the visible window
+	Picker   []string // emoji list, empty when closed
 	Typing   string
 	Composer []string
 	Status   string
@@ -30,7 +31,7 @@ func Chat(theme Theme, frame Frame) string {
 	bodyWidth := frame.Width - frame.SidebarWidth - 1
 	divider := theme.Divider.Render("│")
 
-	rows := max(0, frame.Height-len(frame.Header)-len(frame.Composer)-2)
+	rows := max(0, frame.Height-len(frame.Header)-len(frame.Composer)-len(frame.Picker)-2)
 	for row := 0; row < rows; row++ {
 		left := ""
 		if row < len(frame.Sidebar) {
@@ -43,6 +44,7 @@ func Chat(theme Theme, frame Frame) string {
 		out = append(out, PadCells(left, frame.SidebarWidth)+divider+PadCells(right, bodyWidth))
 	}
 
+	out = append(out, frame.Picker...)
 	out = append(out, frame.Typing)
 	out = append(out, frame.Composer...)
 	out = append(out, frame.Status)

@@ -68,6 +68,7 @@ type Theme struct {
 	SystemMsg    lipgloss.Style
 	ThreadHint   lipgloss.Style
 	Reaction     lipgloss.Style
+	ReactionMine lipgloss.Style
 	Attachment   lipgloss.Style
 	Divider      lipgloss.Style
 	UnreadRule   lipgloss.Style
@@ -106,24 +107,25 @@ func NewTheme(p Palette) Theme {
 		Badge:           base.Foreground(p.Accent).Bold(true),
 		MentionBadge:    base.Foreground(p.Mention).Bold(true),
 
-		Author:      base.Foreground(p.Accent).Bold(true),
-		OwnAuthor:   base.Foreground(p.Own).Bold(true),
-		Time:        base.Foreground(p.Faint),
-		Body:        base.Foreground(p.Text),
-		SystemMsg:   base.Foreground(p.System).Italic(true),
-		ThreadHint:  base.Foreground(p.Accent),
-		Reaction:    base.Foreground(p.Muted),
-		Attachment:  base.Foreground(p.Muted).Italic(true),
-		Divider:     base.Foreground(p.Border),
-		UnreadRule:  base.Foreground(p.Danger).Bold(true),
-		DateRule:    base.Foreground(p.Faint),
-		SelectedBar: base.Foreground(p.Accent).Bold(true),
-		Typing:      base.Foreground(p.Success).Italic(true),
-		Status:      base.Foreground(p.Muted),
-		StatusErr:   base.Foreground(p.Danger),
-		StatusOK:    base.Foreground(p.Success),
-		Key:         base.Foreground(p.Accent).Bold(true),
-		Border:      base.Foreground(p.Border),
+		Author:       base.Foreground(p.Accent).Bold(true),
+		OwnAuthor:    base.Foreground(p.Own).Bold(true),
+		Time:         base.Foreground(p.Faint),
+		Body:         base.Foreground(p.Text),
+		SystemMsg:    base.Foreground(p.System).Italic(true),
+		ThreadHint:   base.Foreground(p.Accent),
+		Reaction:     base.Foreground(p.Muted),
+		ReactionMine: base.Foreground(p.Accent).Bold(true),
+		Attachment:   base.Foreground(p.Muted).Italic(true),
+		Divider:      base.Foreground(p.Border),
+		UnreadRule:   base.Foreground(p.Danger).Bold(true),
+		DateRule:     base.Foreground(p.Faint),
+		SelectedBar:  base.Foreground(p.Accent).Bold(true),
+		Typing:       base.Foreground(p.Success).Italic(true),
+		Status:       base.Foreground(p.Muted),
+		StatusErr:    base.Foreground(p.Danger),
+		StatusOK:     base.Foreground(p.Success),
+		Key:          base.Foreground(p.Accent).Bold(true),
+		Border:       base.Foreground(p.Border),
 
 		PromptLabel:  base.Foreground(p.Muted),
 		PromptActive: base.Foreground(p.Accent).Bold(true),

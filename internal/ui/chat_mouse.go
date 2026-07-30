@@ -69,7 +69,9 @@ func (m chatModel) handleMouse(msg tea.MouseMsg) (chatModel, tea.Cmd) {
 	case regionSidebar:
 		return m.clickSidebar(row)
 	case regionBody:
-		return m.clickBody(row)
+		// Columns are measured from the start of the message pane, past the
+		// sidebar and its divider.
+		return m.clickBody(row, msg.X-m.sidebarWidth()-1)
 	case regionComposer:
 		m.focus = focusComposer
 		cmd := m.syncComposerFocus()
@@ -116,9 +118,42 @@ func (m chatModel) clickSidebar(row int) (chatModel, tea.Cmd) {
 	return m, cmd
 }
 
+// reactionAt returns the reaction whose chip covers a column on a reaction line.
+//
+// Spans are measured from the start of the content, so the two-cell gutter the
+// timeline draws has to be added back before comparing.
+func (m chatModel) reactionAt(line, column int) (string, bool) {
+	const gutter = 2
+	for _, span := range m.body.ReactionSpans[line] {
+		if column >= span.Start+gutter && column < span.End+gutter {
+			return span.Emoji, true
+		}
+	}
+	return "", false
+}
+
+// messageIDAt is the id of the message at an index in the visible pane.
+func (m chatModel) messageIDAt(index int) string {
+	switch m.mode {
+	case bodyThread:
+		if index >= 0 && index < len(m.threadReplies) {
+			return m.threadReplies[index].ID
+		}
+	case bodyThreadList:
+		if index >= 0 && index < len(m.threads) {
+			return m.threads[index].ID
+		}
+	default:
+		if index >= 0 && index < len(m.messages) {
+			return m.messages[index].ID
+		}
+	}
+	return ""
+}
+
 // clickBody selects the message under the pointer, or opens a thread when the
 // click lands on a thread affordance.
-func (m chatModel) clickBody(row int) (chatModel, tea.Cmd) {
+func (m chatModel) clickBody(row, column int) (chatModel, tea.Cmd) {
 	line := m.scroll + row
 	if line < 0 || line >= len(m.body.Lines) {
 		return m, nil
@@ -126,6 +161,18 @@ func (m chatModel) clickBody(row int) (chatModel, tea.Cmd) {
 
 	m.focus = focusMessages
 	m.composer.Blur()
+
+	// A click on a reaction chip toggles it, which is the quickest way to add a
+	// +1 to something someone else already reacted to.
+	if index, ok := m.body.ReactionLine[line]; ok {
+		if shortcode, hit := m.reactionAt(line, column); hit {
+			m.setCursor(index)
+			m.rebuildBody()
+			m.core.React(m.messageIDAt(index), shortcode,
+				!m.alreadyReacted(m.messageIDAt(index), shortcode))
+			return m, nil
+		}
+	}
 
 	// A click straight on "↳ N replies" opens that thread.
 	if index, ok := m.body.HintLine[line]; ok && m.mode == bodyTimeline {

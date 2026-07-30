@@ -27,8 +27,9 @@ func RoomKind(roomType string, teamMain bool, parentRoomID string) Kind {
 }
 
 // FromRocketMessage converts an SDK message into the view type. selfID marks
-// messages authored by the logged-in user.
-func FromRocketMessage(src rocket.Message, selfID string) Message {
+// messages authored by the logged-in user, and selfUsername marks reactions the
+// user has already made — reactions identify people by username, not id.
+func FromRocketMessage(src rocket.Message, selfID, selfUsername string) Message {
 	msg := Message{
 		ID:           src.ID,
 		RoomID:       src.RoomID,
@@ -51,8 +52,12 @@ func FromRocketMessage(src rocket.Message, selfID string) Message {
 	if src.ThreadLastAt != nil {
 		msg.ThreadLastAt = src.ThreadLastAt.Time
 	}
-	for emoji, reaction := range src.Reactions {
-		msg.Reactions = append(msg.Reactions, Reaction{Emoji: emoji, Usernames: reaction.Usernames})
+	for shortcode, reaction := range src.Reactions {
+		msg.Reactions = append(msg.Reactions, Reaction{
+			Emoji:     shortcode,
+			Usernames: reaction.Usernames,
+			Mine:      containsName(reaction.Usernames, selfUsername),
+		})
 	}
 	sort.Slice(msg.Reactions, func(i, j int) bool { return msg.Reactions[i].Emoji < msg.Reactions[j].Emoji })
 
@@ -133,6 +138,19 @@ func LatestTime(times ...time.Time) time.Time {
 		}
 	}
 	return latest
+}
+
+// containsName reports whether a username appears in a reaction's list.
+func containsName(names []string, want string) bool {
+	if want == "" {
+		return false
+	}
+	for _, name := range names {
+		if name == want {
+			return true
+		}
+	}
+	return false
 }
 
 func firstNonEmpty(values ...string) string {

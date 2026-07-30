@@ -177,8 +177,9 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"↑ ↓ / k j", "move within the focused pane"},
 		{"enter", "rooms: open · messages: open or start a thread · composer: send"},
 		{"ctrl+t", "threads in this room — works while typing"},
+		{"r", "react to the selected message"},
 		{"alt+enter", "newline in the composer"},
-		{"click", "a room, a message, or a ↳ replies line to open its thread"},
+		{"click", "a room, a message, a ↳ replies line, or a reaction to toggle it"},
 		{"wheel", "scroll the pane under the pointer"},
 		{"/", "filter the room list"},
 		{"g", "load older messages"},
@@ -200,6 +201,17 @@ func HelpOverlay(theme Theme, width int) []string {
 		lines = append(lines, "  "+theme.Key.Render(Pad(entry[0], keyWidth))+
 			"  "+theme.Muted.Render(Truncate(entry[1], max(1, width-keyWidth-6))))
 	}
+
+	lines = append(lines,
+		"",
+		theme.Title.Render("  Emoji"),
+		"  "+theme.Muted.Render(Truncate(
+			"Type a colon and a few letters — :jo — and a list appears. tab or", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"enter inserts it, esc dismisses. Shortcodes in messages render as", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"emoji automatically. Press r on a message to react to it.", max(1, width-4))),
+	)
 
 	// The commonest question this answers is how to start a thread, which is not
 	// obvious from a key list alone.

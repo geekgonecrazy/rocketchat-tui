@@ -18,9 +18,11 @@ import (
 type Store struct {
 	db *sql.DB
 
-	// selfID lets read paths flag a message as the local user's without every
-	// caller threading the id through.
-	selfID atomic.Value
+	// selfID and selfUsername let read paths flag a message as the local user's,
+	// and a reaction as one they made, without every caller threading them
+	// through. Reactions identify people by username, messages by id.
+	selfID       atomic.Value
+	selfUsername atomic.Value
 }
 
 // Open opens (creating if needed) the cache database at path and applies

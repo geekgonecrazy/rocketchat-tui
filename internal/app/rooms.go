@@ -298,6 +298,44 @@ func (c *Core) markRead(roomID string) {
 	})
 }
 
+// React toggles a reaction on a message. The emoji is a shortcode such as
+// "joy" or ":joy:".
+//
+// The server echoes the updated message over the websocket, which is what
+// refreshes the timeline, so nothing is written optimistically here: a reaction
+// that the server rejects should not linger on screen.
+func (c *Core) React(messageID, shortcode string, add bool) {
+	c.enqueue(func(c *Core) {
+		if messageID == "" || shortcode == "" {
+			return
+		}
+		roomID, threadID := c.currentRoom, c.currentThread
+		c.background(func(ctx context.Context) error {
+			if err := c.client.React(ctx, messageID, shortcode, add); err != nil {
+				return err
+			}
+			// Fetch the message back rather than guessing at the new counts:
+			// several people may have reacted since we last saw it.
+			updated, err := c.client.GetMessage(ctx, messageID)
+			if err != nil {
+				return err
+			}
+			if err := c.store.SaveMessages([]rocket.Message{updated}); err != nil {
+				return err
+			}
+			c.enqueue(func(c *Core) {
+				if c.currentRoom == roomID {
+					c.emitTimeline(roomID)
+				}
+				if threadID != "" && c.currentThread == threadID {
+					c.emitThread(roomID, threadID)
+				}
+			})
+			return nil
+		})
+	})
+}
+
 // Send posts a message to a room, optionally into a thread.
 func (c *Core) Send(roomID, threadID, text string) {
 	c.enqueue(func(c *Core) {

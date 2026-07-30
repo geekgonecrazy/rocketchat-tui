@@ -11,11 +11,22 @@ import (
 	"github.com/geekgonecrazy/rocketchat-tui/internal/rocket"
 )
 
-// SetIdentity records the logged-in user id used to flag own messages.
-func (s *Store) SetIdentity(userID string) { s.selfID.Store(userID) }
+// SetIdentity records the logged-in user, used to flag own messages (by id) and
+// own reactions (by username, which is how reactions identify people).
+func (s *Store) SetIdentity(userID, username string) {
+	s.selfID.Store(userID)
+	s.selfUsername.Store(username)
+}
 
 func (s *Store) identity() string {
 	if v, ok := s.selfID.Load().(string); ok {
+		return v
+	}
+	return ""
+}
+
+func (s *Store) identityName() string {
+	if v, ok := s.selfUsername.Load().(string); ok {
 		return v
 	}
 	return ""
@@ -335,7 +346,7 @@ func (s *Store) scanMessage(row scanner) (model.Message, error) {
 	msg.ShowInParent = showInParent == 1
 	msg.Own = userID != "" && userID == s.identity()
 
-	if reactions, err := decodeReactions(reactionsJSON); err == nil {
+	if reactions, err := decodeReactions(reactionsJSON, s.identityName()); err == nil {
 		msg.Reactions = reactions
 	}
 	if attachments, err := decodeAttachments(attachmentsJSON); err == nil {
@@ -358,7 +369,7 @@ func encodeJSON(value any) (string, error) {
 	return string(encoded), nil
 }
 
-func decodeReactions(raw string) ([]model.Reaction, error) {
+func decodeReactions(raw, selfUsername string) ([]model.Reaction, error) {
 	if raw == "" {
 		return nil, nil
 	}
@@ -367,8 +378,17 @@ func decodeReactions(raw string) ([]model.Reaction, error) {
 		return nil, err
 	}
 	reactions := make([]model.Reaction, 0, len(wire))
-	for emoji, reaction := range wire {
-		reactions = append(reactions, model.Reaction{Emoji: emoji, Usernames: reaction.Usernames})
+	for shortcode, reaction := range wire {
+		mine := false
+		for _, name := range reaction.Usernames {
+			if name == selfUsername && selfUsername != "" {
+				mine = true
+				break
+			}
+		}
+		reactions = append(reactions, model.Reaction{
+			Emoji: shortcode, Usernames: reaction.Usernames, Mine: mine,
+		})
 	}
 	// Deterministic order so the same message never renders two ways.
 	for i := 1; i < len(reactions); i++ {

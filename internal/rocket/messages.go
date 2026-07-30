@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -145,6 +146,31 @@ func (c *Client) GetMessage(ctx context.Context, messageID string) (Message, err
 		return Message{}, err
 	}
 	return resp.Message, nil
+}
+
+// React adds or removes a reaction on a message.
+//
+// The emoji is a shortcode; the server rejects raw Unicode here. Surrounding
+// colons are added when missing, since callers naturally hold the bare name.
+func (c *Client) React(ctx context.Context, messageID, shortcode string, add bool) error {
+	if messageID == "" || shortcode == "" {
+		return fmt.Errorf("rocket: react requires a message id and an emoji")
+	}
+	if !strings.HasPrefix(shortcode, ":") {
+		shortcode = ":" + shortcode
+	}
+	if !strings.HasSuffix(shortcode, ":") {
+		shortcode += ":"
+	}
+	return c.do(ctx, request{
+		method:   "POST",
+		endpoint: "chat.react",
+		body: map[string]any{
+			"messageId":   messageID,
+			"emoji":       shortcode,
+			"shouldReact": add,
+		},
+	}, nil)
 }
 
 // SendOptions describes an outgoing message. Set ThreadID to reply in a thread;

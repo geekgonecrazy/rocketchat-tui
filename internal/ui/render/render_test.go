@@ -203,7 +203,7 @@ func TestTimelineShowsThreadAndReactionAffordances(t *testing.T) {
 	})
 
 	rendered := strings.Join(view.Lines, "\n")
-	for _, want := range []string{"3 replies", ":+1: 2", "report.pdf"} {
+	for _, want := range []string{"3 replies", "👍 2", "report.pdf"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("expected %q in:\n%s", want, rendered)
 		}
@@ -469,5 +469,109 @@ func TestDayLabel(t *testing.T) {
 	}
 	if got := DayLabel(time.Time{}); got != "" {
 		t.Errorf("zero time = %q", got)
+	}
+}
+
+func TestTimelineRendersEmojiShortcodesAsGlyphs(t *testing.T) {
+	view := Timeline(plainTheme(), TimelineState{
+		Messages: []model.Message{
+			{ID: "a", Username: "alice", Author: "Alice",
+				Text: "shipped it :tada: and it works :joy:", At: time.Now()},
+		},
+		Width:  60,
+		Cursor: -1,
+	})
+	rendered := strings.Join(view.Lines, "\n")
+	if !strings.Contains(rendered, "🎉") || !strings.Contains(rendered, "😂") {
+		t.Errorf("shortcodes were not rendered as glyphs:\n%s", rendered)
+	}
+	if strings.Contains(rendered, ":tada:") {
+		t.Errorf("literal shortcode still present:\n%s", rendered)
+	}
+}
+
+func TestTimelineLeavesNonEmojiColonsAloneInMessages(t *testing.T) {
+	view := Timeline(plainTheme(), TimelineState{
+		Messages: []model.Message{
+			{ID: "a", Username: "alice", Text: "standup at 10:30:00 sharp", At: time.Now()},
+		},
+		Width:  60,
+		Cursor: -1,
+	})
+	if !strings.Contains(strings.Join(view.Lines, "\n"), "10:30:00") {
+		t.Errorf("a timestamp was mangled:\n%s", strings.Join(view.Lines, "\n"))
+	}
+}
+
+func TestTimelineReactionSpansLocateEachChip(t *testing.T) {
+	view := Timeline(plainTheme(), TimelineState{
+		Messages: []model.Message{{
+			ID: "a", Username: "alice", Author: "Alice", Text: "nice", At: time.Now(),
+			Reactions: []model.Reaction{
+				{Emoji: ":+1:", Usernames: []string{"bob", "carol"}},
+				{Emoji: ":tada:", Usernames: []string{"dan"}, Mine: true},
+			},
+		}},
+		Width:  60,
+		Cursor: -1,
+	})
+
+	if len(view.ReactionLine) != 1 {
+		t.Fatalf("expected one reaction line, got %d", len(view.ReactionLine))
+	}
+	var line int
+	for at, index := range view.ReactionLine {
+		line = at
+		if index != 0 {
+			t.Errorf("reaction line maps to message %d, want 0", index)
+		}
+	}
+
+	spans := view.ReactionSpans[line]
+	if len(spans) != 2 {
+		t.Fatalf("expected two spans, got %d", len(spans))
+	}
+	if spans[0].Emoji != ":+1:" || spans[1].Emoji != ":tada:" {
+		t.Errorf("spans carry the wrong emoji: %+v", spans)
+	}
+	if spans[0].End <= spans[0].Start {
+		t.Errorf("first span is empty: %+v", spans[0])
+	}
+	if spans[1].Start < spans[0].End {
+		t.Errorf("spans overlap: %+v", spans)
+	}
+
+	rendered := view.Lines[line]
+	if !strings.Contains(rendered, "👍 2") || !strings.Contains(rendered, "🎉 1") {
+		t.Errorf("reaction chips = %q", rendered)
+	}
+}
+
+func TestTimelineReactionsFitTheWidth(t *testing.T) {
+	var many []model.Reaction
+	for _, name := range []string{":+1:", ":tada:", ":joy:", ":heart:", ":rocket:", ":eyes:", ":fire:"} {
+		many = append(many, model.Reaction{Emoji: name, Usernames: []string{"a", "b"}})
+	}
+	view := Timeline(plainTheme(), TimelineState{
+		Messages: []model.Message{
+			{ID: "a", Username: "alice", Text: "x", At: time.Now(), Reactions: many},
+		},
+		Width:  24,
+		Cursor: -1,
+	})
+	for _, line := range view.Lines {
+		if Width(line) > 24 {
+			t.Errorf("reaction line overflows: %d cells in %q", Width(line), line)
+		}
+	}
+}
+
+func TestReactionCountAndOwnership(t *testing.T) {
+	reaction := model.Reaction{Emoji: ":+1:", Usernames: []string{"a", "b", "c"}}
+	if reaction.Count() != 3 {
+		t.Errorf("Count() = %d, want 3", reaction.Count())
+	}
+	if reaction.Mine {
+		t.Error("Mine should default to false")
 	}
 }

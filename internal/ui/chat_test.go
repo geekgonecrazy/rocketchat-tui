@@ -816,3 +816,280 @@ func TestMouseClicksOnChromeAreIgnored(t *testing.T) {
 		t.Errorf("a click on chrome changed the open room to %q", m.activeRoom)
 	}
 }
+
+// --- emoji completion ---------------------------------------------------------
+
+func TestComposerCompleterOpensWhileTyping(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m.focus = focusComposer
+
+	for _, r := range "nice :jo" {
+		m, _ = m.Update(press(string(r)))
+	}
+	if m.picker.mode != pickerComplete {
+		t.Fatalf("completer not open after typing %q (mode=%v)", ":jo", m.picker.mode)
+	}
+	if m.picker.query != "jo" {
+		t.Errorf("query = %q, want jo", m.picker.query)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, ":joy:") || !strings.Contains(view, "😂") {
+		t.Errorf("suggestion list missing joy:\n%s", view)
+	}
+}
+
+func TestComposerCompleterStaysClosedForOrdinaryColons(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m.focus = focusComposer
+
+	// A time, and a URL: neither should summon the list.
+	for _, r := range "standup at 10:30" {
+		m, _ = m.Update(press(string(r)))
+	}
+	if m.picker.active() {
+		t.Errorf("completer opened on a timestamp (query=%q)", m.picker.query)
+	}
+
+	m.composer.Reset()
+	m.picker.close()
+	for _, r := range "see http://x" {
+		m, _ = m.Update(press(string(r)))
+	}
+	if m.picker.active() {
+		t.Errorf("completer opened inside a URL (query=%q)", m.picker.query)
+	}
+}
+
+func TestComposerCompleterClosesWhenNothingMatches(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m.focus = focusComposer
+
+	for _, r := range ":jo" {
+		m, _ = m.Update(press(string(r)))
+	}
+	if !m.picker.active() {
+		t.Fatal("expected the completer to be open")
+	}
+	for _, r := range "zzzqqq" {
+		m, _ = m.Update(press(string(r)))
+	}
+	if m.picker.active() {
+		t.Error("completer stayed open with no matches")
+	}
+}
+
+func TestComposerCompletionInsertsGlyph(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m.focus = focusComposer
+
+	for _, r := range "shipped :tada" {
+		m, _ = m.Update(press(string(r)))
+	}
+	if !m.picker.active() {
+		t.Fatal("completer not open")
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	if got := m.composer.Value(); got != "shipped 🎉 " {
+		t.Errorf("composer = %q, want %q", got, "shipped 🎉 ")
+	}
+	if m.picker.active() {
+		t.Error("completer should close after accepting")
+	}
+}
+
+func TestComposerCompleterNavigationAndDismiss(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m.focus = focusComposer
+
+	for _, r := range ":sm" {
+		m, _ = m.Update(press(string(r)))
+	}
+	if !m.picker.active() {
+		t.Fatal("completer not open")
+	}
+	first, _ := m.picker.selected()
+	m, _ = m.Update(press("down"))
+	second, _ := m.picker.selected()
+	if first.Name == second.Name {
+		t.Error("down did not move the selection")
+	}
+
+	// Escape dismisses without touching the text.
+	before := m.composer.Value()
+	m, _ = m.Update(press("esc"))
+	if m.picker.active() {
+		t.Error("esc did not dismiss the completer")
+	}
+	if m.composer.Value() != before {
+		t.Errorf("esc altered the composer: %q", m.composer.Value())
+	}
+}
+
+func TestComposerEnterSendsWhenCompleterIsClosed(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m.focus = focusComposer
+
+	for _, r := range "plain message" {
+		m, _ = m.Update(press(string(r)))
+	}
+	m, _ = m.Update(press("enter"))
+	if m.composer.Value() != "" {
+		t.Errorf("enter should have sent, composer = %q", m.composer.Value())
+	}
+}
+
+// --- reactions ---------------------------------------------------------------
+
+func reactableChat(t *testing.T) chatModel {
+	t.Helper()
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID: "r1",
+		Messages: []model.Message{{
+			ID: "target", Username: "alice", Author: "Alice", Text: "nice work",
+			At: time.Now().Add(-time.Minute),
+			Reactions: []model.Reaction{
+				{Emoji: ":+1:", Usernames: []string{"bob"}},
+				{Emoji: ":tada:", Usernames: []string{"me"}, Mine: true},
+			},
+		}},
+	})
+	return m
+}
+
+func TestReactPickerOpensOnSelectedMessage(t *testing.T) {
+	m := reactableChat(t)
+	m.focus = focusMessages
+	m, _ = m.Update(press("k")) // select the message
+	m, _ = m.Update(press("r"))
+
+	if m.picker.mode != pickerReact {
+		t.Fatalf("react picker not open (mode=%v)", m.picker.mode)
+	}
+	if m.picker.target != "target" {
+		t.Errorf("picker target = %q, want target", m.picker.target)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "React") {
+		t.Errorf("picker title missing:\n%s", view)
+	}
+	// The quick-reaction set should be offered before anything is typed.
+	if len(m.picker.matches) == 0 {
+		t.Error("no default suggestions offered")
+	}
+}
+
+func TestReactPickerFiltersAndIsModal(t *testing.T) {
+	m := reactableChat(t)
+	m.focus = focusMessages
+	m, _ = m.Update(press("k"))
+	m, _ = m.Update(press("r"))
+
+	for _, r := range "rocket" {
+		m, _ = m.Update(press(string(r)))
+	}
+	if m.picker.query != "rocket" {
+		t.Errorf("query = %q, want rocket", m.picker.query)
+	}
+	match, ok := m.picker.selected()
+	if !ok || match.Glyph != "🚀" {
+		t.Errorf("selected = %+v, want the rocket", match)
+	}
+
+	// Typing must not leak into the composer while the picker is modal.
+	if m.composer.Value() != "" {
+		t.Errorf("composer captured picker input: %q", m.composer.Value())
+	}
+
+	m, _ = m.Update(press("esc"))
+	if m.picker.active() {
+		t.Error("esc did not close the picker")
+	}
+}
+
+func TestReactPickerWithNoSelectionExplainsItself(t *testing.T) {
+	m := reactableChat(t)
+	m.focus = focusMessages
+	// No message selected yet.
+	m, _ = m.Update(press("r"))
+
+	if m.picker.active() {
+		t.Error("picker opened with nothing selected")
+	}
+	if !strings.Contains(m.View(), "select a message first") {
+		t.Errorf("expected an explanation in the status bar:\n%s", m.View())
+	}
+}
+
+func TestAlreadyReactedDetectsOwnReaction(t *testing.T) {
+	m := reactableChat(t)
+	if !m.alreadyReacted("target", "tada") {
+		t.Error("own reaction not detected")
+	}
+	if m.alreadyReacted("target", "+1") {
+		t.Error("someone else's reaction counted as ours")
+	}
+	if m.alreadyReacted("target", "joy") {
+		t.Error("absent reaction reported as ours")
+	}
+	if m.alreadyReacted("nope", "tada") {
+		t.Error("unknown message reported as reacted")
+	}
+}
+
+func TestClickOnReactionChipTogglesIt(t *testing.T) {
+	m := reactableChat(t)
+
+	var line int = -1
+	for at := range m.body.ReactionLine {
+		line = at
+	}
+	if line < 0 {
+		t.Fatal("no reaction line rendered")
+	}
+	spans := m.body.ReactionSpans[line]
+	if len(spans) < 2 {
+		t.Fatalf("expected two reaction chips, got %d", len(spans))
+	}
+
+	// Click inside the first chip; it should select the message, not open a
+	// thread or scroll.
+	const gutter = 2
+	x := m.sidebarWidth() + 1 + spans[0].Start + gutter
+	m, _ = m.Update(click(x, headerRows+line-m.scroll))
+
+	if m.mode != bodyTimeline {
+		t.Errorf("clicking a reaction changed the pane mode to %v", m.mode)
+	}
+	if m.cursorMsgID != "target" {
+		t.Errorf("selection = %q, want target", m.cursorMsgID)
+	}
+}
+
+func TestClickBesideReactionsStillSelectsTheMessage(t *testing.T) {
+	m := reactableChat(t)
+	var line int = -1
+	for at := range m.body.ReactionLine {
+		line = at
+	}
+	if line < 0 {
+		t.Fatal("no reaction line rendered")
+	}
+
+	// Far to the right of the chips: no reaction there, so it is an ordinary
+	// message click.
+	m, _ = m.Update(click(m.sidebarWidth()+1+60, headerRows+line-m.scroll))
+	if m.cursorMsgID != "target" {
+		t.Errorf("selection = %q, want target", m.cursorMsgID)
+	}
+}

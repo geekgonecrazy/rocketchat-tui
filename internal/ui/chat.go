@@ -98,6 +98,10 @@ type chatModel struct {
 
 	composer textarea.Model
 	focus    focusArea
+
+	// picker backs both the composer's inline emoji completer and the modal
+	// reaction picker; only one is ever open.
+	picker emojiPicker
 }
 
 func newChatModel(core *app.Core, theme render.Theme, username, serverLabel string) chatModel {
@@ -151,10 +155,23 @@ func (m chatModel) composerHeight() int {
 	return lines
 }
 
+// pickerHeight is how many lines the emoji list occupies, zero when closed.
+func (m chatModel) pickerHeight() int {
+	if !m.picker.active() {
+		return 0
+	}
+	rows := min(pickerRows, max(1, len(m.picker.matches)))
+	if m.picker.mode == pickerReact {
+		rows++ // title line
+	}
+	return rows
+}
+
 // bodyHeight mirrors render.Chat's arithmetic: header (2), typing (1),
-// composer, status (1).
+// composer, status (1). The picker eats into the body so the composer stays put
+// rather than the whole layout shifting when the list appears.
 func (m chatModel) bodyHeight() int {
-	return max(1, m.height-2-1-1-m.composerHeight())
+	return max(1, m.height-2-1-1-m.composerHeight()-m.pickerHeight())
 }
 
 // ---- update -----------------------------------------------------------------
@@ -302,6 +319,22 @@ func (m chatModel) View() string {
 		body = render.Window(render.HelpOverlay(m.theme, m.bodyWidth()), 0, bodyHeight)
 	}
 
+	var picker []string
+	if m.picker.active() {
+		title := ""
+		if m.picker.mode == pickerReact {
+			title = "React"
+		}
+		picker = render.EmojiPicker(m.theme, render.EmojiPickerState{
+			Title:   title,
+			Query:   m.picker.query,
+			Matches: m.picker.matches,
+			Cursor:  m.picker.cursor,
+			Width:   m.width,
+			MaxRows: pickerRows,
+		})
+	}
+
 	composer := render.Composer(m.theme, render.ComposerState{
 		Width:      m.width,
 		View:       m.composer.View(),
@@ -316,6 +349,7 @@ func (m chatModel) View() string {
 		Header:       header,
 		Sidebar:      sidebar,
 		Body:         body,
+		Picker:       picker,
 		Typing:       render.TypingLine(m.theme, m.typing[m.activeRoom], m.width),
 		Composer:     composer,
 		Status:       m.statusBar(),
@@ -373,10 +407,10 @@ func (m chatModel) statusBar() string {
 		connection = "connected"
 	}
 
-	hints := "enter thread · ctrl+t threads · g older · ? help"
+	hints := "enter thread · r react · ctrl+t threads · ? help"
 	switch m.focus {
 	case focusComposer:
-		hints = "enter send · ctrl+t threads · alt+enter newline · ? help"
+		hints = "enter send · :emoji · ctrl+t threads · ? help"
 	case focusRooms:
 		hints = "enter open · / filter · ctrl+t threads · ? help"
 	}

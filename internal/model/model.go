@@ -102,9 +102,17 @@ func (r Room) HasUnread() bool { return r.Unread > 0 || r.Alert }
 
 // Reaction is one emoji and who used it.
 type Reaction struct {
+	// Emoji is the shortcode as the server stores it, e.g. ":joy:". Rendering
+	// converts it to a glyph; the API needs it in this form.
 	Emoji     string
 	Usernames []string
+	// Mine reports whether the logged-in user is among them, which drives both
+	// the highlight and whether toggling adds or removes.
+	Mine bool
 }
+
+// Count is how many people used this reaction.
+func (r Reaction) Count() int { return len(r.Usernames) }
 
 // Attachment is the terminal-friendly subset of a Rocket.Chat attachment.
 type Attachment struct {

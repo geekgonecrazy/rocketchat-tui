@@ -224,7 +224,7 @@ func (c *Core) Start(userID, username string) {
 	c.enqueue(func(c *Core) {
 		c.selfID = userID
 		c.selfUsername = username
-		c.store.SetIdentity(userID)
+		c.store.SetIdentity(userID, username)
 
 		// Offline-first: render whatever the cache holds before any network call.
 		c.refreshRooms()
@@ -237,13 +237,13 @@ func (c *Core) Start(userID, username string) {
 				return err
 			}
 			c.enqueue(func(c *Core) {
-				if me.ID != "" && me.ID != c.selfID {
+				if me.ID != "" {
 					c.selfID = me.ID
-					c.store.SetIdentity(me.ID)
 				}
 				if me.Username != "" {
 					c.selfUsername = me.Username
 				}
+				c.store.SetIdentity(c.selfID, c.selfUsername)
 			})
 			return c.syncRooms(ctx)
 		})

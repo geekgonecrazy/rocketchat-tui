@@ -21,6 +21,8 @@ rooms and history immediately instead of an empty screen.
   to it when you open a room
 - Live typing indicators, sent and received the way the web client does it
 - Thread view: browse a room's threads, read a thread, and reply into it
+- Emoji: shortcodes render as glyphs, `:jo` pops up an autocomplete while you
+  type, and any message can be reacted to
 - Works offline against the local cache; reconnects and resyncs automatically
 
 ## Install
@@ -76,6 +78,7 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `↑ ↓` or `k j` | Move within the focused pane |
 | `enter` | Rooms: open · Messages: open or start a thread · Composer: send |
 | `ctrl+t` | Thread list for this room — works while typing |
+| `r` | React to the selected message |
 | `alt+enter` | Newline in the composer |
 | `/` | Filter the room list |
 | `g` | Load older messages |
@@ -88,7 +91,29 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `ctrl+c` | Quit |
 
 The mouse works too: click a room to open it, click a message to select it,
-click a `↳ N replies` line to open that thread, and scroll with the wheel.
+click a `↳ N replies` line to open that thread, click a reaction to toggle it,
+and scroll with the wheel.
+
+### Emoji and reactions
+
+Shortcodes render as glyphs wherever they appear — `:joy:` shows as 😂 in
+messages, reactions and thread previews. Text that merely contains colons is
+left alone, so `10:30:45` and `http://host/:path:` survive intact.
+
+Typing a colon followed by a letter or two opens an autocomplete:
+
+```
+› nice work :ta
+  🎉  :tada:
+  🍹  :tropical_drink:
+  🎯  :dart:
+```
+
+`tab` or `enter` inserts the glyph, `↑`/`↓` move, `esc` dismisses.
+
+To react, select a message and press `r`. The picker opens on a set of common
+reactions; type to search the full set. Reactions you have already made are
+highlighted, and choosing one again removes it — as does clicking it.
 
 ### Starting a thread
 
@@ -107,6 +132,7 @@ timeline.
 ```
 cmd/rctui/              the binary: flags, config, logging, program startup
 internal/rocket/        the mini SDK: REST + DDP, no other internal deps
+internal/emoji/         shortcode ↔ glyph table, generated from gemoji
 internal/model/         view-facing domain types (Room, Message, Kind)
 internal/store/         SQLite cache: rooms, subscriptions, messages, paging state
 internal/app/           headless core: owns SDK + cache + all state, emits events
@@ -228,8 +254,18 @@ published documentation, with the confirmation status of each. Several bugs in
 this client were found only by running against a real server — that document is
 where those lessons live.
 
+## Regenerating the emoji table
+
+`internal/emoji/table.go` is generated from
+[gemoji](https://github.com/github/gemoji), the same database GitHub, Slack and
+Rocket.Chat shortcodes come from. To refresh it:
+
+```sh
+cd internal/emoji && go generate
+```
+
 ## Not implemented
 
-Presence (deliberately out of scope), file uploads, emoji reactions authoring,
-message editing and deletion, search, admin functions, and E2E-encrypted rooms
-(their messages arrive as ciphertext).
+Presence (deliberately out of scope), file uploads, message editing and
+deletion, search, admin functions, and E2E-encrypted rooms (their messages
+arrive as ciphertext).
