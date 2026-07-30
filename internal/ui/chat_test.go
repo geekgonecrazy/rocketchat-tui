@@ -187,6 +187,66 @@ func TestChatRoomCursorMovesAndOpens(t *testing.T) {
 	}
 }
 
+func TestChatEnterOnAlreadyOpenRoomKeepsIt(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID:   "r1",
+		Room:     model.Room{ID: "r1", DisplayName: "general", Kind: model.KindChannel},
+		Messages: []model.Message{{ID: "a", Username: "alice", Text: "hi", At: time.Now()}},
+	})
+	m = event(m, app.MembersUpdated{RoomID: "r1", Members: []model.Member{{Username: "alice"}}})
+
+	// The core is already on this room, so it re-emits nothing: clearing the view
+	// here would leave the pane empty as if no room were open.
+	m.focus = focusRooms
+	m, _ = m.Update(press("enter"))
+
+	if m.activeRoom != "r1" {
+		t.Errorf("active room = %q, want r1", m.activeRoom)
+	}
+	if len(m.messages) != 1 {
+		t.Error("re-entering the open room should not clear its loaded messages")
+	}
+	if m.room.DisplayName != "general" {
+		t.Errorf("room header = %q, want general", m.room.DisplayName)
+	}
+	if len(m.members) != 1 {
+		t.Error("re-entering the open room should not clear its roster")
+	}
+	if m.focus != focusComposer {
+		t.Errorf("focus = %v, want composer", m.focus)
+	}
+	if !strings.Contains(m.View(), "hi") {
+		t.Error("timeline should still be on screen")
+	}
+}
+
+func TestChatEnterOnAlreadyOpenRoomLeavesThreadView(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID:   "r1",
+		Messages: []model.Message{{ID: "a", Username: "alice", Text: "hi", At: time.Now()}},
+	})
+	m.mode = bodyThread
+	m.threadID = "a"
+	m.threadReplies = []model.Message{{ID: "b", Username: "bob", Text: "re", At: time.Now()}}
+
+	m.focus = focusRooms
+	m, _ = m.Update(press("enter"))
+
+	if m.mode != bodyTimeline {
+		t.Errorf("mode = %v, want timeline", m.mode)
+	}
+	if m.threadID != "" || m.threadReplies != nil {
+		t.Error("thread state should be dropped when stepping back into the room")
+	}
+	if len(m.messages) != 1 {
+		t.Error("the room's timeline should still be loaded")
+	}
+}
+
 func TestChatRoomFilter(t *testing.T) {
 	m := newTestChat(t)
 	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})

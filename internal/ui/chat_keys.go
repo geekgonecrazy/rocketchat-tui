@@ -272,6 +272,12 @@ func (m *chatModel) openRoom(roomID string) tea.Cmd {
 	if roomID == "" {
 		return nil
 	}
+	// Re-entering the room already on screen must not clear the view: the core is
+	// already on this room, so it emits nothing and there is no timeline, roster
+	// or room header coming to refill the pane. Step into it instead.
+	if roomID == m.activeRoom {
+		return m.reenterRoom()
+	}
 	if m.activeRoom != "" && m.activeRoom != roomID {
 		m.core.StopTyping(m.activeRoom)
 	}
@@ -307,6 +313,22 @@ func (m *chatModel) openRoom(roomID string) tea.Cmd {
 	m.core.OpenRoom(roomID)
 	m.rebuildBody()
 	return textarea.Blink
+}
+
+// reenterRoom moves into the room that is already open, keeping everything it
+// has loaded. Thread and thread-list views fall back to the timeline, since
+// entering a room from the sidebar means the room itself.
+func (m *chatModel) reenterRoom() tea.Cmd {
+	if m.mode != bodyTimeline {
+		m.mode = bodyTimeline
+		m.threadID = ""
+		m.threadReplies = nil
+		m.threadParent = model.Message{}
+		m.core.CloseThread()
+	}
+	m.focus = focusComposer
+	m.rebuildBody()
+	return m.syncComposerFocus()
 }
 
 func (m chatModel) send() (chatModel, tea.Cmd) {
