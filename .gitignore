@@ -1,0 +1,14 @@
+# Built binaries
+/rctui
+/rctui-*
+/cmd/rctui/rctui
+
+# Live-test state: contains room ids specific to whichever server was used
+/test/integration/testdata/live-fixture.json
+
+# Local compose overrides and secrets
+/deploy/.env
+
+# Editor and OS noise
+.DS_Store
+*.swp
