@@ -88,6 +88,9 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `u` | Jump to the unread line |
 | `U` | Mark unread: the room under the sidebar cursor, or from the selected message |
 | `t` | Thread list (messages pane only) |
+| `v` | View the selected message's image full-screen |
+| `s` | Save the selected message's attachment to your downloads |
+| `o` | Open the selected message's attachment in a desktop app |
 | `esc` | Close thread / clear filter / leave the composer |
 | `ctrl+r` | Resync now |
 | `ctrl+l` | Mark the current room read |
@@ -160,6 +163,45 @@ Typing a colon followed by a letter or two opens an autocomplete:
 To react, select a message and press `r`. The picker opens on a set of common
 reactions; type to search the full set. Reactions you have already made are
 highlighted, and choosing one again removes it — as does clicking it.
+
+### Attachments and images
+
+An attachment renders as a one-liner in the timeline, sigilled `🖼` when it is
+an image rctui can show you and `📎` when it is not. Select the message and
+press `v`, and the image is drawn full-screen, at whatever resolution your
+terminal can manage. Any key returns you to the chat exactly where you left it.
+
+Which resolution that is depends on the terminal:
+
+| Terminal | Protocol | Result |
+| --- | --- | --- |
+| kitty, Ghostty, WezTerm, Konsole | kitty graphics | Real pixels |
+| iTerm2, VS Code, mintty | iTerm2 inline images | Real pixels |
+| Anything else, and inside tmux | Half-block cells | Coarse but legible |
+
+Detection is automatic. If it guesses wrong — terminals impersonate one another
+constantly — override it:
+
+```sh
+RCTUI_IMAGE_PROTOCOL=kitty rctui    # or iterm2, or blocks
+```
+
+Inside tmux rctui deliberately drops to half-blocks: a multiplexer does not pass
+graphics escapes through without configuration, and repaints over the pixels
+even when it does. Half-blocks are made of ordinary cells, so they survive it.
+
+Inside the viewer, `s` saves the image, `o` hands it to your desktop, and `n`/`p`
+cycle when one message carries several images. Those keys work from the timeline
+too, and `s` and `o` work on any attachment, not just images — that is how you
+reach a PDF or a zip. Saved files land in `~/Downloads`, or wherever
+`download_dir` in the config points:
+
+```json
+{ "download_dir": "~/screenshots" }
+```
+
+WebP and AVIF have no decoder in the Go standard library and rctui takes no
+dependency to add one, so those open externally rather than drawing.
 
 ### Starting a thread
 
@@ -315,3 +357,10 @@ cd internal/emoji && go generate
 Presence (deliberately out of scope), file uploads, message editing and
 deletion, search, admin functions, and E2E-encrypted rooms (their messages
 arrive as ciphertext).
+
+Images are viewed full-screen rather than inline in the timeline: Bubbletea
+repaints by diffing lines and has no concept of an image cell, so an inline
+placement would have to be tracked and torn down on every scroll, resize, and
+incoming message. Sixel is not spoken either — the two native protocols already
+cover every terminal that has one, and animation is not played, only the first
+frame of a GIF.

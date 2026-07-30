@@ -91,7 +91,23 @@ type Notice struct {
 	IsErr bool
 }
 
+// AttachmentFetched is an attachment now sitting in the local cache, ready to
+// be drawn, saved, or handed to the desktop. Path is empty when Err is set.
+//
+// MessageID and Index say which attachment this is: a fetch is asynchronous, so
+// the user may have moved the cursor or opened another room before it lands,
+// and the UI needs to know whether the result is still the one it asked for.
+type AttachmentFetched struct {
+	MessageID  string
+	Index      int
+	Attachment model.Attachment
+	Path       string
+	MIME       string
+	Err        error
+}
+
 func (RoomsUpdated) isAppEvent()      {}
+func (AttachmentFetched) isAppEvent() {}
 func (TimelineUpdated) isAppEvent()   {}
 func (ThreadListUpdated) isAppEvent() {}
 func (ThreadUpdated) isAppEvent()     {}

@@ -43,7 +43,10 @@ func TestFullScreenSnapshot(t *testing.T) {
 				Reactions: []model.Reaction{{Emoji: ":+1:", Usernames: []string{"alice", "carol"}, Mine: true}}},
 			{ID: "d", Username: "carol", Author: "Carol", SystemType: "uj", At: base.Add(10 * time.Minute)},
 			{ID: "e", Username: "carol", Author: "Carol", Text: "Left a few notes in the thread :tada: Also attaching the perf numbers.", At: lastSeen.Add(time.Minute),
-				Attachments: []model.Attachment{{Title: "perf-before-after.png", Text: "42% faster on cold start"}}},
+				Attachments: []model.Attachment{{
+					Title: "perf-before-after.png", Text: "42% faster on cold start",
+					Source: "/file-upload/img1/perf-before-after.png", MIME: "image/png", Upload: true,
+				}}},
 			{ID: "f", Username: "tester", Author: "Test Tester", Text: "Nice, I'll review after standup.", At: lastSeen.Add(3 * time.Minute), Own: true},
 		},
 		UnreadFrom: lastSeen, UnreadCount: 2, HasMore: true,
@@ -64,7 +67,7 @@ func TestFullScreenSnapshot(t *testing.T) {
 		"new messages",                     // unread divider
 		"\u21b3 3 replies",                 // thread affordance
 		"\U0001f44d 2",                     // reactions render as glyphs
-		"\U0001f4ce perf-before-after.png", // attachment
+		"\U0001f5bc perf-before-after.png", // image attachment, sigilled as viewable
 		"Carol joined the channel",         // system message
 		"alice and bob are typing\u2026",   // typing indicator
 		"sounds good",                      // composer contents

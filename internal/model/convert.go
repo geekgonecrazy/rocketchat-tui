@@ -63,16 +63,34 @@ func FromRocketMessage(src rocket.Message, selfID, selfUsername string) Message 
 
 	for _, attachment := range src.Attachments {
 		converted := Attachment{
-			Title: firstNonEmpty(attachment.Title, attachment.AuthorName),
-			Text:  firstNonEmpty(attachment.Text, attachment.Description),
-			Link:  firstNonEmpty(attachment.TitleLink, attachment.ImageURL),
+			Title:  firstNonEmpty(attachment.Title, attachment.AuthorName),
+			Text:   firstNonEmpty(attachment.Text, attachment.Description),
+			Link:   firstNonEmpty(attachment.TitleLink, attachment.ImageURL),
+			MIME:   attachment.ImageType,
+			Size:   attachment.ImageSize,
+			Upload: attachment.TitleLinkDownload,
 		}
+		// ImageURL is the renderable bytes and wins; TitleLink is the download
+		// route for an upload the server sent no preview for (a PDF, a zip).
+		// A link preview sets neither of those to something we own, so Upload
+		// stays false and the file is only ever opened, never saved as ours.
+		converted.Source = firstNonEmpty(attachment.ImageURL, downloadLink(attachment))
 		if converted.Title == "" && converted.Text == "" && converted.Link == "" {
 			continue
 		}
 		msg.Attachments = append(msg.Attachments, converted)
 	}
 	return msg
+}
+
+// downloadLink is the title link, but only when the server marked it as a file
+// download. An unfurled web page also has a title link, and that one points at
+// somebody else's site rather than at bytes we can save.
+func downloadLink(attachment rocket.Attachment) string {
+	if !attachment.TitleLinkDownload {
+		return ""
+	}
+	return attachment.TitleLink
 }
 
 // MergeRoom folds room metadata and the user's subscription into one view row.

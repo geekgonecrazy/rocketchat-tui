@@ -178,7 +178,8 @@ func (r *Root) startSession(session app.Session) tea.Cmd {
 	go r.core.Run(sessionCtx)
 	r.core.Start(session.UserID, session.Username)
 
-	r.chat = newChatModel(r.core, r.theme, session.Username, shortServer(session.Client.ServerURL()))
+	r.chat = newChatModel(r.core, r.theme, session.Username,
+		shortServer(session.Client.ServerURL()), r.cfg.Downloads())
 	r.screen = screenChat
 
 	// Hand the new model the size it missed while the login form was up.

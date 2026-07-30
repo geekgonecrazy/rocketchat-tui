@@ -137,3 +137,39 @@ func TestPathsHonourXDGVariables(t *testing.T) {
 		t.Errorf("db path = %q", dbPath)
 	}
 }
+
+func TestDownloadsPrefersTheConfiguredDirectory(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{DownloadDir: dir}
+	if got := cfg.Downloads(); got != dir {
+		t.Errorf("Downloads() = %q, want the configured %q", got, dir)
+	}
+}
+
+func TestDownloadsExpandsTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory in this environment")
+	}
+	cfg := &config.Config{DownloadDir: filepath.Join("~", "elsewhere")}
+	if want := filepath.Join(home, "elsewhere"); cfg.Downloads() != want {
+		t.Errorf("Downloads() = %q, want %q", cfg.Downloads(), want)
+	}
+}
+
+func TestDownloadsFallsBackWhenUnset(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory in this environment")
+	}
+
+	got := (&config.Config{}).Downloads()
+	// Either ~/Downloads when the platform made one, or the home directory —
+	// but always somewhere that exists and belongs to the user.
+	if got != filepath.Join(home, "Downloads") && got != home {
+		t.Errorf("Downloads() = %q, want ~/Downloads or the home directory", got)
+	}
+	if _, err := os.Stat(got); err != nil {
+		t.Errorf("default download directory %q is not usable: %v", got, err)
+	}
+}

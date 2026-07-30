@@ -152,7 +152,7 @@ func Timeline(theme Theme, state TimelineState) TimelineView {
 			emit(theme.Body.Render(line))
 		}
 		for _, attachment := range msg.Attachments {
-			emit(theme.Attachment.Render(Truncate("📎 "+attachmentLabel(attachment), contentWidth)))
+			emit(theme.Attachment.Render(Truncate(attachmentSigil(attachment)+" "+attachmentLabel(attachment), contentWidth)))
 		}
 		if len(msg.Reactions) > 0 {
 			rendered, spans := reactionChips(theme, msg.Reactions, contentWidth)
@@ -247,6 +247,15 @@ func reactionChips(theme Theme, reactions []model.Reaction, width int) (string, 
 		cursor += Width(chip)
 	}
 	return b.String(), spans
+}
+
+// attachmentSigil marks an image differently from any other attachment, so it
+// is obvious at a glance which lines "v" will actually show you.
+func attachmentSigil(attachment model.Attachment) string {
+	if attachment.IsImage() {
+		return "🖼"
+	}
+	return "📎"
 }
 
 func attachmentLabel(attachment model.Attachment) string {

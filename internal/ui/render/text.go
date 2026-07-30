@@ -12,6 +12,26 @@ import (
 // Width returns the printable cell width of s, ignoring ANSI escapes.
 func Width(s string) int { return runewidth.StringWidth(stripANSI(s)) }
 
+// HumanBytes formats a file size for a status line: three significant figures
+// at most, so it stays the same handful of columns wide whatever the value.
+func HumanBytes(n int64) string {
+	if n < 1024 {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	value, units := float64(n), []string{"KB", "MB", "GB", "TB"}
+	for _, unit := range units {
+		value /= 1024
+		if value < 1024 || unit == units[len(units)-1] {
+			precision := 1
+			if value >= 10 {
+				precision = 0
+			}
+			return strconv.FormatFloat(value, 'f', precision, 64) + " " + unit
+		}
+	}
+	return strconv.FormatInt(n, 10) + " B"
+}
+
 // Truncate shortens s to at most width cells, appending an ellipsis when cut.
 func Truncate(s string, width int) string {
 	if width <= 0 {

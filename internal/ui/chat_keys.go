@@ -209,6 +209,12 @@ func (m chatModel) handleMessagesKey(pressed string) (chatModel, tea.Cmd) {
 		return m.toggleThreadList()
 	case "r", "+":
 		return m.openReactPicker()
+	case "v":
+		return m.requestAttachment(actionView)
+	case "s":
+		return m.requestAttachment(actionSave)
+	case "o":
+		return m.requestAttachment(actionOpen)
 	case "enter":
 		return m.openSelectedThread()
 	case "esc", "h", "left":

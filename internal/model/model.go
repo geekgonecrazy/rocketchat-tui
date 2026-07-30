@@ -3,6 +3,9 @@
 package model
 
 import (
+	"net/url"
+	pathpkg "path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -129,10 +132,83 @@ type Reaction struct {
 func (r Reaction) Count() int { return len(r.Usernames) }
 
 // Attachment is the terminal-friendly subset of a Rocket.Chat attachment.
+//
+// Title/Text/Link are what the timeline one-liner shows. The rest describes the
+// file behind it, so an image can be fetched and drawn: Source is the reference
+// to download (usually server-relative, so it needs resolving against the
+// server URL), and Upload separates a real uploaded file from a link preview
+// the server unfurled — only the former is ours to save or open.
 type Attachment struct {
 	Title string
 	Text  string
 	Link  string
+
+	Source string
+	MIME   string
+	Size   int64
+	Upload bool
+}
+
+// imageExtensions backs IsImage when the server did not declare a MIME type,
+// which happens on older uploads and on unfurled remote images.
+var imageExtensions = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
+	".webp": true, ".bmp": true, ".tiff": true, ".tif": true,
+}
+
+// IsImage reports whether the attachment is something the viewer can draw.
+func (a Attachment) IsImage() bool {
+	if a.Source == "" {
+		return false
+	}
+	if a.MIME != "" {
+		return strings.HasPrefix(a.MIME, "image/")
+	}
+	path := a.Source
+	if cut := strings.IndexAny(path, "?#"); cut >= 0 {
+		path = path[:cut]
+	}
+	return imageExtensions[strings.ToLower(filepath.Ext(path))]
+}
+
+// Filename is the name to save the attachment under. It prefers the title,
+// which is what Rocket.Chat sets for an upload, and falls back to the last
+// path segment of the source.
+func (a Attachment) Filename() string {
+	if name := sanitizeFilename(a.Title); name != "" {
+		return name
+	}
+	path := a.Source
+	if cut := strings.IndexAny(path, "?#"); cut >= 0 {
+		path = path[:cut]
+	}
+	if decoded, err := url.PathUnescape(path); err == nil {
+		path = decoded
+	}
+	if name := sanitizeFilename(pathpkg.Base(path)); name != "" {
+		return name
+	}
+	return "attachment"
+}
+
+// sanitizeFilename keeps a server-supplied name from escaping the directory we
+// mean to write it into. Titles are arbitrary user input.
+func sanitizeFilename(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' {
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.Trim(name, ". ")
+	if name == "" || name == "." || name == ".." {
+		return ""
+	}
+	if len(name) > 120 {
+		name = name[:120]
+	}
+	return name
 }
 
 // Message is one entry in the timeline.

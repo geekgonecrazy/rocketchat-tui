@@ -23,7 +23,7 @@ func newTestChat(t *testing.T) chatModel {
 	}
 	core := app.New(client, nil, nil)
 
-	m := newChatModel(core, render.DefaultTheme(), "tester", "chat.example.com")
+	m := newChatModel(core, render.DefaultTheme(), "tester", "chat.example.com", t.TempDir())
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return m
 }

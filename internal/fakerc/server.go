@@ -80,6 +80,7 @@ type Server struct {
 	sent          []SentMessage
 	readRooms     []string
 	unreadMarks   []UnreadMark
+	fileRequests  int
 	nextID        int
 	t             *testing.T
 }
@@ -108,6 +109,7 @@ func New(t *testing.T) *Server {
 	mux.HandleFunc("/api/v1/chat.sendMessage", s.authed(s.handleSendMessage))
 	mux.HandleFunc("/api/v1/subscriptions.read", s.authed(s.handleMarkRead))
 	mux.HandleFunc("/api/v1/subscriptions.unread", s.authed(s.handleMarkUnread))
+	mux.HandleFunc("/file-upload/", s.authed(s.handleFileUpload))
 	mux.HandleFunc("/websocket", s.handleWebSocket)
 
 	s.Server = httptest.NewServer(mux)

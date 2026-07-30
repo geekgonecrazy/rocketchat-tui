@@ -146,16 +146,24 @@ type Reaction struct {
 	Usernames []string `json:"usernames"`
 }
 
-// Attachment is rendered as a compact one-liner in the TUI; we keep only the
-// fields worth showing in a terminal.
+// Attachment is rendered as a compact one-liner in the TUI, and images can be
+// opened in a full-screen viewer; we keep the fields worth showing in a
+// terminal plus what is needed to fetch the file behind it.
+//
+// An uploaded file sets TitleLinkDownload and carries its own MIME type and
+// size; a link preview (an OG card the server unfurled) sets neither, which is
+// how the two are told apart.
 type Attachment struct {
-	Title       string `json:"title"`
-	TitleLink   string `json:"title_link"`
-	Text        string `json:"text"`
-	Description string `json:"description"`
-	ImageURL    string `json:"image_url"`
-	AuthorName  string `json:"author_name"`
-	Type        string `json:"type"`
+	Title             string `json:"title"`
+	TitleLink         string `json:"title_link"`
+	TitleLinkDownload bool   `json:"title_link_download"`
+	Text              string `json:"text"`
+	Description       string `json:"description"`
+	ImageURL          string `json:"image_url"`
+	ImageType         string `json:"image_type"`
+	ImageSize         int64  `json:"image_size"`
+	AuthorName        string `json:"author_name"`
+	Type              string `json:"type"`
 }
 
 // Message is a single chat message. Thread replies carry ThreadParentID;

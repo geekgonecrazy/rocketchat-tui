@@ -23,7 +23,45 @@ type Config struct {
 	// Theme selects the colour palette; "" means the default.
 	Theme string `json:"theme,omitempty"`
 
+	// DownloadDir is where saved attachments are written; "" means the default,
+	// resolved by Downloads.
+	DownloadDir string `json:"download_dir,omitempty"`
+
 	path string `json:"-"`
+}
+
+// Downloads is where saved attachments go: whatever the user configured, else
+// ~/Downloads if the platform made one, else the home directory. It is only a
+// preferred location — nothing is created until something is actually saved.
+func (c *Config) Downloads() string {
+	if configured := strings.TrimSpace(c.DownloadDir); configured != "" {
+		if expanded, err := expandHome(configured); err == nil {
+			return expanded
+		}
+		return configured
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	downloads := filepath.Join(home, "Downloads")
+	if info, err := os.Stat(downloads); err == nil && info.IsDir() {
+		return downloads
+	}
+	return home
+}
+
+// expandHome resolves a leading ~, which people write in config files and
+// which nothing in the standard library expands for us.
+func expandHome(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~"+string(os.PathSeparator)) {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
 }
 
 // Paths resolves the config file and cache database locations, honouring

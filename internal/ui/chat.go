@@ -12,6 +12,7 @@ import (
 	"github.com/geekgonecrazy/rocketchat-tui/internal/app"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/model"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/rocket"
+	"github.com/geekgonecrazy/rocketchat-tui/internal/termimg"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/ui/render"
 )
 
@@ -107,9 +108,14 @@ type chatModel struct {
 	mentions mentionPicker
 	// members are the mention candidates for the open room, best first.
 	members []model.Member
+
+	// attachments
+	pending       pendingAttachment
+	downloadDir   string
+	imageProtocol termimg.Protocol
 }
 
-func newChatModel(core *app.Core, theme render.Theme, username, serverLabel string) chatModel {
+func newChatModel(core *app.Core, theme render.Theme, username, serverLabel, downloadDir string) chatModel {
 	composer := textarea.New()
 	composer.Placeholder = "Write a message…"
 	composer.Prompt = ""
@@ -131,6 +137,10 @@ func newChatModel(core *app.Core, theme render.Theme, username, serverLabel stri
 		typing:         make(map[string]model.TypingUsers),
 		pinnedToBottom: true,
 		conn:           rocket.Connecting,
+		downloadDir:    downloadDir,
+		// Detected once at startup: the terminal cannot change out from under a
+		// running process, and probing on every keypress would be wasted work.
+		imageProtocol: termimg.DetectEnv(),
 	}
 }
 
@@ -200,6 +210,9 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 
 	case coreEventMsg:
 		return m.handleCoreEvent(msg.event)
+
+	case viewerFinishedMsg:
+		return m.viewerClosed(msg)
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -303,6 +316,9 @@ func (m chatModel) handleCoreEvent(event app.Event) (chatModel, tea.Cmd) {
 	case app.Notice:
 		m.notice, m.noticeErr = e.Text, e.IsErr
 		return m, tea.Tick(6*time.Second, func(time.Time) tea.Msg { return clearNoticeMsg{} })
+
+	case app.AttachmentFetched:
+		return m.attachmentFetched(e)
 
 	case app.SessionReady:
 		m.username = e.Username

@@ -474,3 +474,23 @@ func writeJSON(w http.ResponseWriter, status int, body map[string]any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }
+
+// handleFileUpload serves an attachment. Like a real server it demands
+// credentials: uploads are not public, which is the whole reason a client
+// cannot simply hand the URL to something else.
+func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.fileRequests++
+	s.mu.Unlock()
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Write(FilePNG)
+}
+
+// FileRequests is how many times an attachment has actually been fetched, so a
+// test can tell a cache hit from a round trip.
+func (s *Server) FileRequests() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fileRequests
+}
