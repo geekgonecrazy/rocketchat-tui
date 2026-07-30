@@ -1095,3 +1095,85 @@ func TestClickBesideReactionsStillSelectsTheMessage(t *testing.T) {
 		t.Errorf("selection = %q, want target", m.cursorMsgID)
 	}
 }
+
+func TestChatMarkUnreadFromTheRoomList(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m.focus = focusRooms
+	m, _ = m.Update(press("j")) // move to the DM with alice
+
+	m, _ = m.Update(press("U"))
+
+	if !strings.Contains(m.notice, "alice") {
+		t.Errorf("notice = %q, want it to name the room under the cursor", m.notice)
+	}
+	// Marking unread must not open the room: the point is to leave it alone.
+	if m.activeRoom != "r1" {
+		t.Errorf("active room = %q, want the originally open r1", m.activeRoom)
+	}
+}
+
+func TestChatMarkUnreadFromASelectedMessage(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID: "r1",
+		Messages: []model.Message{
+			{ID: "a", Username: "alice", Text: "one", At: time.Now().Add(-2 * time.Minute)},
+			{ID: "b", Username: "alice", Text: "two", At: time.Now().Add(-time.Minute)},
+		},
+	})
+	m.focus = focusMessages
+	m, _ = m.Update(press("k")) // select "b"
+
+	m, _ = m.Update(press("U"))
+	if !strings.Contains(m.notice, "from here") {
+		t.Errorf("notice = %q, want the per-message wording", m.notice)
+	}
+
+	// u still jumps to the divider; the two are a case apart and must stay apart.
+	m.notice = ""
+	m, _ = m.Update(press("u"))
+	if m.notice != "" {
+		t.Errorf("u marked unread instead of jumping: %q", m.notice)
+	}
+}
+
+func TestChatMarkUnreadFallsBackToTheRoomWithNoSelection(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID: "r1",
+		Room:   model.Room{ID: "r1", Name: "general", DisplayName: "general", Kind: model.KindChannel},
+		Messages: []model.Message{
+			{ID: "a", Username: "alice", Text: "one", At: time.Now().Add(-time.Minute)},
+		},
+	})
+	m.focus = focusMessages // cursor is on no message
+
+	m, _ = m.Update(press("U"))
+	if !strings.Contains(m.notice, "general") || strings.Contains(m.notice, "from here") {
+		t.Errorf("notice = %q, want the whole room marked unread", m.notice)
+	}
+}
+
+func TestChatRefusesToMarkUnreadFromYourOwnMessage(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID: "r1",
+		Messages: []model.Message{
+			{ID: "mine", Username: "tester", Text: "my own words", Own: true,
+				At: time.Now().Add(-time.Minute)},
+		},
+	})
+	m.focus = focusMessages
+	m, _ = m.Update(press("k"))
+
+	// The server refuses this, so the user hears why instead of watching the
+	// divider appear and then vanish when the round trip comes back.
+	m, _ = m.Update(press("U"))
+	if !strings.Contains(m.notice, "own message") {
+		t.Errorf("notice = %q, want the refusal", m.notice)
+	}
+}

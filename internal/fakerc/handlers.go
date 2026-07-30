@@ -294,6 +294,36 @@ func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+func (s *Server) handleMarkUnread(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		RoomID             string `json:"roomId"`
+		FirstUnreadMessage struct {
+			ID string `json:"_id"`
+		} `json:"firstUnreadMessage"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	s.mu.Lock()
+	reject := s.RejectUnread
+	if !reject {
+		s.unreadMarks = append(s.unreadMarks, UnreadMark{
+			RoomID:    body.RoomID,
+			MessageID: body.FirstUnreadMessage.ID,
+		})
+	}
+	s.mu.Unlock()
+
+	if reject {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success":   false,
+			"error":     "Not allowed [error-action-not-allowed]",
+			"errorType": "error-action-not-allowed",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
 // ---- DDP --------------------------------------------------------------------
 
 var upgrader = websocket.Upgrader{

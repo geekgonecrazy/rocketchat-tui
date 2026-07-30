@@ -233,11 +233,11 @@ the method differs.
 **What we do:** create the room with `groups.create`/`channels.create`, then
 attach it with `teams.addRooms`. See `rocket.CreateTeamChannel`.
 
-## 12. `subscriptions.unread` rejects the documented per-message form
+## 12. `subscriptions.unread` refuses the per-message form for your own messages
 
-**Status:** confirmed (8.4) · **Severity:** minor; affects tooling, not the client
+**Status:** confirmed (8.4) · **Severity:** an unexplained 400 in the user's face
 
-The endpoint documents two bodies. Only one works here:
+The endpoint documents two bodies:
 
 | Body | Result |
 | --- | --- |
@@ -245,10 +245,20 @@ The endpoint documents two bodies. Only one works here:
 | `{"firstUnreadMessage": {"_id": "<mid>"}}` | 400 `error-action-not-allowed` |
 
 The per-message form was rejected when the target message was the caller's own,
-which may be the whole explanation — a user cannot mark unread from their own
-message. Untested with a message from someone else.
+which is most likely the whole explanation — a user cannot mark unread from their
+own message, and the web client hides the action there. Still untested with a
+message from someone else.
 
-**What we do:** `rocket.MarkUnread` exposes only the room-level form.
+**What we do:** both forms are exposed — `rocket.MarkUnread` for the room and
+`rocket.MarkUnreadFrom` for a message. Own messages are refused client-side with
+a readable reason rather than being sent and surfacing as "Not allowed", and any
+other refusal rolls the optimistic local unread back (`Core.markUnread`), so the
+sidebar never keeps a badge the server does not have.
+
+Local state mirrors the server's: `alert: true`, and a last-seen marker moved
+*back* to just before the first unread message. That is the one write allowed to
+regress the marker, so it bypasses the `MAX(last_seen_at, …)` guard that the
+subscription upsert uses against stale deltas (`Store.SetUnread`).
 
 ## 13. Unread state has three shapes, and two of them carry no number
 
@@ -380,4 +390,12 @@ Things not yet settled against a live server:
 - **Whether `subscriptions.read` accepts `roomId` as well as `rid`.** We send
   `rid`, which works; the alternative is untested.
 - **Whether the per-message `subscriptions.unread` form works for another user's
-  message.** Only the own-message case was tried, and it was refused.
+  message.** Only the own-message case was tried, and it was refused. The client
+  now sends this form (`U` on a selected message), so the first live use will
+  answer it: if the server refuses that too, the mark-unread is rolled back and
+  the server's message is shown, and only the room-level form is worth keeping.
+- **Where the server puts `ls` when marking unread**, exactly. We anchor to the
+  message before the first unread one, which places the divider correctly; if
+  the server instead stores the unread message's own timestamp, the subscription
+  upsert's `MAX()` would adopt it on the next sync and shift the divider down by
+  one message on a later visit.

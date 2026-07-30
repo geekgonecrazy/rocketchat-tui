@@ -184,6 +184,7 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"/", "filter the room list"},
 		{"g", "load older messages"},
 		{"u", "jump to the unread line"},
+		{"U", "mark unread: the room, or from the selected message"},
 		{"esc", "close thread / clear filter / leave the composer"},
 		{"ctrl+r", "resync now"},
 		{"ctrl+l", "mark the current room read"},

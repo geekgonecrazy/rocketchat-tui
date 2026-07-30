@@ -264,6 +264,24 @@ func (s *Store) ClearUnread(roomID string, lastSeen time.Time) error {
 	return nil
 }
 
+// SetUnread overwrites a room's local unread state, including moving the
+// last-seen marker backwards — which is the whole point of marking unread, and
+// the one thing the subscription upsert's MAX(last_seen_at, …) refuses to do.
+//
+// Mentions are left alone: marking unread says "I have not dealt with this", not
+// "someone mentioned me". The server's next subscription sync is authoritative
+// for all of it; this exists so the sidebar reacts before the round trip.
+func (s *Store) SetUnread(roomID string, unread int, alert bool, lastSeen time.Time) error {
+	_, err := s.db.Exec(`
+		UPDATE subscriptions
+		SET unread = ?, alert = ?, last_seen_at = ?
+		WHERE room_id = ?`, unread, boolToInt(alert), millis(lastSeen), roomID)
+	if err != nil {
+		return fmt.Errorf("store: set unread %s: %w", roomID, err)
+	}
+	return nil
+}
+
 // LastSeen returns the room's last-seen marker, which positions the unread
 // divider.
 func (s *Store) LastSeen(roomID string) (time.Time, error) {

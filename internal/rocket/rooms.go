@@ -74,17 +74,31 @@ func (c *Client) MarkRead(ctx context.Context, roomID string) error {
 	}, nil)
 }
 
-// MarkUnread marks a whole room unread.
-//
-// The endpoint also documents a firstUnreadMessage form for marking unread from
-// a specific message, but the server rejects it with error-action-not-allowed
-// (observed on 8.4 when the target message is the caller's own), so only the
-// room-level form is exposed here.
+// MarkUnread marks a whole room unread. The server flags the subscription with
+// alert: true and unread: 1 — the last message becomes the new one.
 func (c *Client) MarkUnread(ctx context.Context, roomID string) error {
 	return c.do(ctx, request{
 		method:   "POST",
 		endpoint: "subscriptions.unread",
 		body:     map[string]any{"roomId": roomID},
+	}, nil)
+}
+
+// MarkUnreadFrom marks a room unread from a specific message onwards, so that
+// message and everything after it counts as new.
+//
+// The server refuses this form with error-action-not-allowed when the target is
+// the caller's own message (observed on 8.4) — a user cannot mark unread from
+// something they wrote. Callers should keep their own messages away from here
+// rather than letting that surface as a bare 400; see docs/api-deviations.md §12.
+func (c *Client) MarkUnreadFrom(ctx context.Context, messageID string) error {
+	if messageID == "" {
+		return fmt.Errorf("rocket: mark unread requires a message id")
+	}
+	return c.do(ctx, request{
+		method:   "POST",
+		endpoint: "subscriptions.unread",
+		body:     map[string]any{"firstUnreadMessage": map[string]any{"_id": messageID}},
 	}, nil)
 }
 

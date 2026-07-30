@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/geekgonecrazy/rocketchat-tui/internal/model"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/rocket"
 )
 
@@ -270,6 +271,8 @@ func (c *Core) markRead(roomID string) {
 	if roomID == "" {
 		return
 	}
+	// Reading the room, however it happened, retires any deliberate unread.
+	delete(c.heldUnread, roomID)
 
 	// Anchor the local last-seen marker to the newest server timestamp we hold,
 	// never to the local clock. The two routinely disagree — 94 seconds of skew
@@ -298,6 +301,176 @@ func (c *Core) markRead(roomID string) {
 	c.background(func(ctx context.Context) error {
 		return c.client.MarkRead(ctx, roomID)
 	})
+}
+
+// MarkUnread flags a whole room unread again: its last message becomes new, the
+// same thing the server does for the room-level form.
+func (c *Core) MarkUnread(roomID string) {
+	c.enqueue(func(c *Core) { c.markUnread(roomID, "") })
+}
+
+// MarkUnreadFrom flags a room unread starting at one message, so that message
+// and everything after it counts as new. An empty messageID falls back to the
+// room as a whole.
+func (c *Core) MarkUnreadFrom(roomID, messageID string) {
+	c.enqueue(func(c *Core) { c.markUnread(roomID, messageID) })
+}
+
+// unreadSnapshot is a room's local unread state before an optimistic write, kept
+// so a rejected mark-unread can put back exactly what was on screen.
+type unreadSnapshot struct {
+	unread   int
+	alert    bool
+	lastSeen time.Time
+	// marker and count are the frozen divider; frozen records whether it had
+	// been decided at all, which is not the same as being decided as "none".
+	marker time.Time
+	count  int
+	frozen bool
+}
+
+// markUnread is the counterpart to markRead. messageID names the first message
+// that should count as new; empty means the room's last message.
+//
+// Like markRead it writes locally first and confirms over the network, but
+// unlike markRead it restores the previous state if the server refuses: an
+// unread badge the server does not agree with would survive until the next full
+// sync, quietly claiming there is something to read.
+func (c *Core) markUnread(roomID, messageID string) {
+	if roomID == "" {
+		return
+	}
+
+	target, cached, ok := c.unreadTarget(roomID, messageID)
+	if !ok {
+		return
+	}
+
+	previous := c.captureUnread(roomID)
+
+	// A room whose history has never been loaded has nothing to anchor to. The
+	// server knows its own last message, so the call still goes out and the room
+	// simply alerts without a divider until the next sync — the "alert, no ls"
+	// shape the sidebar already handles (deviation §13).
+	anchor, unread := previous.lastSeen, 1
+	if cached {
+		var err error
+		// The anchor sits between the target and the message before it, so the
+		// divider lands immediately above the target rather than below it.
+		anchor, err = c.store.UnreadAnchor(roomID, target.At)
+		if err != nil {
+			c.reportError(err)
+			return
+		}
+		unread, err = c.store.CountAfter(roomID, anchor)
+		if err != nil {
+			c.reportError(err)
+			return
+		}
+	}
+
+	if err := c.store.SetUnread(roomID, unread, true, anchor); err != nil {
+		c.reportError(err)
+		return
+	}
+
+	// Hold the room unread against the realtime path: a message arriving in the
+	// room the user is looking at normally marks it read again, which would undo
+	// this within seconds of the next reply.
+	c.heldUnread[roomID] = true
+
+	// The divider is frozen per visit, so marking unread has to move it by hand;
+	// the user is looking at the room and expects the line to appear now.
+	if roomID == c.currentRoom {
+		c.unreadMarker[roomID] = anchor
+		c.unreadAtOpen[roomID] = unread
+		c.emitTimeline(roomID)
+	}
+	c.refreshRooms()
+
+	c.background(func(ctx context.Context) error {
+		var err error
+		if messageID != "" {
+			err = c.client.MarkUnreadFrom(ctx, messageID)
+		} else {
+			err = c.client.MarkUnread(ctx, roomID)
+		}
+		if err != nil {
+			c.enqueue(func(c *Core) { c.restoreUnread(roomID, previous) })
+			return err
+		}
+		return nil
+	})
+}
+
+// unreadTarget resolves the message a mark-unread is anchored to. cached is
+// false when the room has no local history to anchor to — the mark still goes
+// ahead, without a divider. ok is false when there is nothing to do at all, and
+// the caller has already been told why.
+func (c *Core) unreadTarget(roomID, messageID string) (target model.Message, cached, ok bool) {
+	if messageID == "" {
+		// The room's newest timeline message: what the server would pick too.
+		latest, err := c.store.RoomTimeline(roomID, 1)
+		if err != nil {
+			c.reportError(err)
+			return model.Message{}, false, false
+		}
+		if len(latest) == 0 {
+			return model.Message{}, false, true
+		}
+		return latest[0], true, true
+	}
+
+	target, found, err := c.store.Message(messageID)
+	if err != nil {
+		c.reportError(err)
+		return model.Message{}, false, false
+	}
+	if !found {
+		c.emit(Notice{Text: "that message is no longer cached"})
+		return model.Message{}, false, false
+	}
+	// The server refuses this outright (deviation §12), and its error says
+	// nothing a user could act on.
+	if target.Own {
+		c.emit(Notice{Text: "Rocket.Chat won't mark your own message unread"})
+		return model.Message{}, false, false
+	}
+	return target, true, true
+}
+
+// captureUnread records a room's unread state so it can be put back.
+func (c *Core) captureUnread(roomID string) unreadSnapshot {
+	room, _ := c.roomView(roomID)
+	marker, frozen := c.unreadMarker[roomID]
+	return unreadSnapshot{
+		unread:   room.Unread,
+		alert:    room.Alert,
+		lastSeen: room.LastSeenAt,
+		marker:   marker,
+		count:    c.unreadAtOpen[roomID],
+		frozen:   frozen,
+	}
+}
+
+// restoreUnread undoes an optimistic mark-unread the server rejected.
+func (c *Core) restoreUnread(roomID string, snapshot unreadSnapshot) {
+	delete(c.heldUnread, roomID)
+	if err := c.store.SetUnread(roomID, snapshot.unread, snapshot.alert, snapshot.lastSeen); err != nil {
+		c.reportError(err)
+		return
+	}
+	if snapshot.frozen {
+		c.unreadMarker[roomID] = snapshot.marker
+		c.unreadAtOpen[roomID] = snapshot.count
+	} else {
+		delete(c.unreadMarker, roomID)
+		delete(c.unreadAtOpen, roomID)
+	}
+	c.refreshRooms()
+	if roomID == c.currentRoom {
+		c.emitTimeline(roomID)
+	}
 }
 
 // React toggles a reaction on a message. The emoji is a shortcode such as

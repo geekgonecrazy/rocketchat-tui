@@ -64,6 +64,10 @@ type Core struct {
 	// server often reports alert=true with no count at all, so this is zero more
 	// often than not, and callers must treat zero as "unknown", not "none".
 	unreadAtOpen map[string]int
+	// heldUnread marks rooms the user deliberately marked unread. Without it the
+	// next message to arrive in the open room would mark it read again, undoing
+	// the very thing they asked for.
+	heldUnread map[string]bool
 	// hasMore tracks whether older history may exist server-side.
 	hasMore     map[string]bool
 	loadingMore map[string]bool
@@ -110,6 +114,7 @@ func New(client *rocket.Client, cache *store.Store, logger *slog.Logger) *Core {
 		ctx:              context.Background(),
 		unreadMarker:     make(map[string]time.Time),
 		unreadAtOpen:     make(map[string]int),
+		heldUnread:       make(map[string]bool),
 		hasMore:          make(map[string]bool),
 		loadingMore:      make(map[string]bool),
 		timelineLimit:    make(map[string]int),

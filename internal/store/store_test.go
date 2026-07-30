@@ -442,6 +442,101 @@ func TestLastSeenNeverMovesBackwards(t *testing.T) {
 	}
 }
 
+func TestSetUnreadMovesTheMarkerBackwards(t *testing.T) {
+	s := openStore(t)
+	read := time.Now().UTC().Truncate(time.Millisecond)
+	anchor := read.Add(-10 * time.Minute)
+
+	if err := s.SaveSubscriptions([]rocket.Subscription{
+		{RoomID: "r1", Type: "c", Name: "general", Open: true, LastSeen: tsPtr(read)},
+	}); err != nil {
+		t.Fatalf("SaveSubscriptions: %v", err)
+	}
+
+	// Marking unread is the one write allowed to regress the marker; the upsert's
+	// MAX() guard exists to stop stale syncs, not deliberate action.
+	if err := s.SetUnread("r1", 2, true, anchor); err != nil {
+		t.Fatalf("SetUnread: %v", err)
+	}
+
+	rooms, err := s.Rooms()
+	if err != nil {
+		t.Fatalf("Rooms: %v", err)
+	}
+	if rooms[0].Unread != 2 || !rooms[0].Alert || !rooms[0].HasUnread() {
+		t.Errorf("unread state = %+v, want 2 unread and alerting", rooms[0])
+	}
+	if !rooms[0].LastSeenAt.Equal(anchor) {
+		t.Errorf("last seen = %v, want %v", rooms[0].LastSeenAt, anchor)
+	}
+
+	// And the same call puts the previous state back, which is how a refused
+	// mark-unread is undone.
+	if err := s.SetUnread("r1", 0, false, read); err != nil {
+		t.Fatalf("SetUnread (restore): %v", err)
+	}
+	rooms, err = s.Rooms()
+	if err != nil {
+		t.Fatalf("Rooms: %v", err)
+	}
+	if rooms[0].HasUnread() || !rooms[0].LastSeenAt.Equal(read) {
+		t.Errorf("restored state = %+v, want read at %v", rooms[0], read)
+	}
+}
+
+func TestUnreadAnchorSitsBeforeTheTargetMessage(t *testing.T) {
+	s := openStore(t)
+	base := time.Now().UTC().Truncate(time.Millisecond).Add(-time.Hour)
+
+	if err := s.SaveMessages([]rocket.Message{
+		{ID: "m1", RoomID: "r1", Msg: "first", Timestamp: ts(base),
+			User: rocket.User{Username: "alice"}},
+		{ID: "m2", RoomID: "r1", Msg: "second", Timestamp: ts(base.Add(time.Minute)),
+			User: rocket.User{Username: "bob"}},
+		{ID: "reply", RoomID: "r1", Msg: "hidden reply", ThreadParentID: "m1",
+			Timestamp: ts(base.Add(90 * time.Second)), User: rocket.User{Username: "bob"}},
+		{ID: "m3", RoomID: "r1", Msg: "third", Timestamp: ts(base.Add(2 * time.Minute)),
+			User: rocket.User{Username: "carol"}},
+	}); err != nil {
+		t.Fatalf("SaveMessages: %v", err)
+	}
+
+	// Anchoring on m3 must land on m2, not on the thread reply between them: the
+	// divider is drawn in the timeline, which never shows that reply.
+	anchor, err := s.UnreadAnchor("r1", base.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("UnreadAnchor: %v", err)
+	}
+	if !anchor.Equal(base.Add(time.Minute)) {
+		t.Errorf("anchor = %v, want %v (m2)", anchor, base.Add(time.Minute))
+	}
+	// Everything from m3 on is then unread, and nothing before it.
+	count, err := s.CountAfter("r1", anchor)
+	if err != nil {
+		t.Fatalf("CountAfter: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("unread after anchor = %d, want 1", count)
+	}
+
+	// The oldest message has nothing before it, so the anchor falls just short of
+	// it rather than onto it — anchoring on the message itself would leave it read.
+	anchor, err = s.UnreadAnchor("r1", base)
+	if err != nil {
+		t.Fatalf("UnreadAnchor (oldest): %v", err)
+	}
+	if !anchor.Before(base) {
+		t.Errorf("anchor for the oldest message = %v, want before %v", anchor, base)
+	}
+	count, err = s.CountAfter("r1", anchor)
+	if err != nil {
+		t.Fatalf("CountAfter (oldest): %v", err)
+	}
+	if count != 3 {
+		t.Errorf("unread from the oldest message = %d, want 3", count)
+	}
+}
+
 func TestDeleteMessageAndSubscription(t *testing.T) {
 	s := openStore(t)
 	if err := s.SaveMessages([]rocket.Message{

@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -971,4 +972,280 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// roomInSidebar returns a room from the latest sidebar snapshot.
+func (h *harness) roomInSidebar(roomID string) (model.Room, bool) {
+	snapshot, ok := h.lastRooms()
+	if !ok {
+		return model.Room{}, false
+	}
+	for _, room := range snapshot.Rooms {
+		if room.ID == roomID {
+			return room, true
+		}
+	}
+	return model.Room{}, false
+}
+
+// sidebarShowedUnread reports whether any sidebar snapshot ever had the room
+// unread, which is how a state that was later undone can still be asserted on.
+func (h *harness) sidebarShowedUnread(roomID string) bool {
+	for _, event := range h.snapshot() {
+		snapshot, ok := event.(app.RoomsUpdated)
+		if !ok {
+			continue
+		}
+		for _, room := range snapshot.Rooms {
+			if room.ID == roomID && room.HasUnread() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// lastNotice returns the most recent notice the core published.
+func (h *harness) lastNotice() (app.Notice, bool) {
+	events := h.snapshot()
+	for i := len(events) - 1; i >= 0; i-- {
+		if notice, ok := events[i].(app.Notice); ok {
+			return notice, true
+		}
+	}
+	return app.Notice{}, false
+}
+
+// openReadRoom seeds a three-message room from other people, opens it, and waits
+// until it has been read — the state every mark-unread test starts from.
+func (h *harness) openReadRoom(base time.Time) {
+	h.t.Helper()
+	h.seedRoom("room-1", "general", 0, 0, base.Add(-time.Hour))
+	h.server.AddMessage("m1", "room-1", "alice", "first", base, nil)
+	h.server.AddMessage("m2", "room-1", "bob", "second", base.Add(time.Minute), nil)
+	h.server.AddMessage("m3", "room-1", "carol", "third", base.Add(2*time.Minute), nil)
+
+	h.start()
+	h.waitForRoomInSidebar("room-1")
+	h.core.OpenRoom("room-1")
+	waitFor(h.t, "room history", func() (app.TimelineUpdated, bool) {
+		snapshot, ok := h.lastTimeline("room-1")
+		return snapshot, ok && len(snapshot.Messages) == 3
+	})
+}
+
+func TestMarkUnreadFromMessageMovesTheDividerAboveIt(t *testing.T) {
+	h := newHarness(t)
+	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	h.openReadRoom(base)
+
+	h.core.MarkUnreadFrom("room-1", "m2")
+
+	// The divider anchors to m1, so m2 and m3 are the new messages.
+	timeline := waitFor(t, "divider above m2", func() (app.TimelineUpdated, bool) {
+		snapshot, ok := h.lastTimeline("room-1")
+		return snapshot, ok && snapshot.UnreadFrom.Equal(base)
+	})
+	if timeline.UnreadCount != 2 {
+		t.Errorf("unread count = %d, want 2 (m2 and m3)", timeline.UnreadCount)
+	}
+
+	// The sidebar has to say so too, otherwise the room is only unread for as
+	// long as it stays open.
+	room := waitFor(t, "sidebar to show the room unread", func() (model.Room, bool) {
+		room, ok := h.roomInSidebar("room-1")
+		return room, ok && room.HasUnread()
+	})
+	if room.Unread != 2 {
+		t.Errorf("sidebar unread = %d, want 2", room.Unread)
+	}
+
+	mark := waitFor(t, "the server to be told", func() (fakerc.UnreadMark, bool) {
+		marks := h.server.UnreadMarks()
+		if len(marks) == 0 {
+			return fakerc.UnreadMark{}, false
+		}
+		return marks[0], true
+	})
+	if mark.MessageID != "m2" {
+		t.Errorf("server mark = %+v, want the per-message form for m2", mark)
+	}
+}
+
+func TestMarkUnreadRoomLevelFlagsTheLastMessage(t *testing.T) {
+	h := newHarness(t)
+	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	h.openReadRoom(base)
+
+	h.core.MarkUnread("room-1")
+
+	// The room-level form makes the last message new, which is what the server
+	// does with it (unread: 1, alert: true).
+	room := waitFor(t, "sidebar to show the room unread", func() (model.Room, bool) {
+		room, ok := h.roomInSidebar("room-1")
+		return room, ok && room.HasUnread()
+	})
+	if room.Unread != 1 {
+		t.Errorf("sidebar unread = %d, want 1", room.Unread)
+	}
+	timeline, _ := h.lastTimeline("room-1")
+	if !timeline.UnreadFrom.Equal(base.Add(time.Minute)) {
+		t.Errorf("divider = %v, want it above m3 at %v", timeline.UnreadFrom, base.Add(time.Minute))
+	}
+
+	mark := waitFor(t, "the server to be told", func() (fakerc.UnreadMark, bool) {
+		marks := h.server.UnreadMarks()
+		if len(marks) == 0 {
+			return fakerc.UnreadMark{}, false
+		}
+		return marks[0], true
+	})
+	if mark.RoomID != "room-1" || mark.MessageID != "" {
+		t.Errorf("server mark = %+v, want the room-level form", mark)
+	}
+}
+
+func TestMarkUnreadRefusesYourOwnMessage(t *testing.T) {
+	h := newHarness(t)
+	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	h.seedRoom("room-1", "general", 0, 0, base.Add(-time.Hour))
+	h.server.AddMessage("m1", "room-1", "alice", "first", base, nil)
+	h.server.AddMessage("mine", "room-1", fakerc.Username, "my own words", base.Add(time.Minute),
+		map[string]any{"u": map[string]any{"_id": fakerc.UserID, "username": fakerc.Username}})
+
+	h.start()
+	h.waitForRoomInSidebar("room-1")
+	h.core.OpenRoom("room-1")
+	waitFor(t, "room history", func() (app.TimelineUpdated, bool) {
+		snapshot, ok := h.lastTimeline("room-1")
+		return snapshot, ok && len(snapshot.Messages) == 2
+	})
+
+	h.core.MarkUnreadFrom("room-1", "mine")
+
+	// The server refuses this outright, so it is refused here with a reason
+	// instead of being sent and reported as a bare 400.
+	notice := waitFor(t, "the refusal", func() (app.Notice, bool) {
+		notice, ok := h.lastNotice()
+		return notice, ok && strings.Contains(notice.Text, "own message")
+	})
+	if notice.IsErr {
+		t.Errorf("notice %q is flagged as an error; it is a refusal, not a failure", notice.Text)
+	}
+	if marks := h.server.UnreadMarks(); len(marks) != 0 {
+		t.Errorf("server was called anyway: %+v", marks)
+	}
+	if room, ok := h.roomInSidebar("room-1"); ok && room.HasUnread() {
+		t.Errorf("room went unread despite the refusal: %+v", room)
+	}
+}
+
+func TestMarkUnreadIsRolledBackWhenTheServerRefuses(t *testing.T) {
+	h := newHarness(t)
+	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	h.server.RejectUnread = true
+	h.openReadRoom(base)
+
+	h.core.MarkUnreadFrom("room-1", "m2")
+
+	// The rollback is queued before the failure is reported, so the sidebar has
+	// settled by the time the notice appears — no sleep needed, and no race with
+	// the optimistic write this is meant to be undoing.
+	notice := waitFor(t, "the failure to be reported", func() (app.Notice, bool) {
+		notice, ok := h.lastNotice()
+		return notice, ok && notice.IsErr
+	})
+	if !strings.Contains(notice.Text, "not-allowed") {
+		t.Errorf("notice = %q, want the server's refusal", notice.Text)
+	}
+
+	// The optimistic write must actually have happened, or this proves nothing.
+	if !h.sidebarShowedUnread("room-1") {
+		t.Fatal("the room never went unread, so there was nothing to roll back")
+	}
+
+	// An unread badge the server does not have would otherwise survive until the
+	// next full sync, claiming there is something to read when there is not.
+	if room, ok := h.roomInSidebar("room-1"); !ok || room.HasUnread() {
+		t.Errorf("unread survived the refusal: %+v", room)
+	}
+	if timeline, ok := h.lastTimeline("room-1"); ok && !timeline.UnreadFrom.IsZero() {
+		t.Errorf("divider survived the refusal: %v", timeline.UnreadFrom)
+	}
+}
+
+func TestMarkedUnreadRoomStaysUnreadWhenAMessageArrives(t *testing.T) {
+	h := newHarness(t)
+	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	h.openReadRoom(base)
+	h.waitConnected()
+
+	h.core.MarkUnreadFrom("room-1", "m2")
+	waitFor(t, "the room to go unread", func() (bool, bool) {
+		room, ok := h.roomInSidebar("room-1")
+		return true, ok && room.HasUnread()
+	})
+	readsBefore := len(h.server.ReadRooms())
+
+	// Traffic in the open room normally marks it read again. A room the user
+	// deliberately marked unread has to survive that, or the feature lasts only
+	// until the next reply.
+	h.server.PushMessage("m4", "room-1", "bob", "and another", time.Now(), nil)
+	waitFor(t, "the pushed message", func() (bool, bool) {
+		snapshot, ok := h.lastTimeline("room-1")
+		if !ok {
+			return false, false
+		}
+		for _, msg := range snapshot.Messages {
+			if msg.ID == "m4" {
+				return true, true
+			}
+		}
+		return false, false
+	})
+
+	time.Sleep(200 * time.Millisecond)
+	if reads := h.server.ReadRooms(); len(reads) != readsBefore {
+		t.Errorf("room was marked read again: %v", reads)
+	}
+	if room, ok := h.roomInSidebar("room-1"); !ok || !room.HasUnread() {
+		t.Errorf("room stopped being unread: %+v", room)
+	}
+}
+
+func TestMarkUnreadWorksOnARoomWithNoCachedHistory(t *testing.T) {
+	h := newHarness(t)
+	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	// Never opened, so the cache holds the subscription and nothing else — the
+	// normal state of most of the sidebar on a cold start.
+	h.seedRoom("room-1", "general", 0, 0, base)
+	h.server.AddMessage("m1", "room-1", "alice", "first", base.Add(time.Minute), nil)
+
+	h.start()
+	h.waitForRoomInSidebar("room-1")
+
+	h.core.MarkUnread("room-1")
+
+	// With nothing to anchor to the room still alerts; the server knows its own
+	// last message, and the count arrives with the next sync.
+	room := waitFor(t, "sidebar to show the room unread", func() (model.Room, bool) {
+		room, ok := h.roomInSidebar("room-1")
+		return room, ok && room.HasUnread()
+	})
+	if !room.Alert {
+		t.Errorf("room = %+v, want it alerting", room)
+	}
+	// The marker must not have been invented: an ls in the wrong place puts the
+	// divider in the wrong place for the whole of the next visit.
+	if !room.LastSeenAt.Equal(base) {
+		t.Errorf("last seen = %v, want it untouched at %v", room.LastSeenAt, base)
+	}
+	waitFor(t, "the server to be told", func() (bool, bool) {
+		for _, mark := range h.server.UnreadMarks() {
+			if mark.RoomID == "room-1" {
+				return true, true
+			}
+		}
+		return false, false
+	})
 }

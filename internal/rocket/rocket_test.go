@@ -319,6 +319,51 @@ func TestMarkRead(t *testing.T) {
 	}
 }
 
+func TestMarkUnreadSendsTheRoomFormAndTheMessageForm(t *testing.T) {
+	server := fakerc.New(t)
+	client := newClient(t, server)
+	if _, err := client.LoginWithToken(context.Background(), fakerc.AuthToken); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	if err := client.MarkUnread(context.Background(), "room-1"); err != nil {
+		t.Fatalf("MarkUnread: %v", err)
+	}
+	if err := client.MarkUnreadFrom(context.Background(), "msg-7"); err != nil {
+		t.Fatalf("MarkUnreadFrom: %v", err)
+	}
+
+	marks := server.UnreadMarks()
+	if len(marks) != 2 {
+		t.Fatalf("server recorded %d marks, want 2: %+v", len(marks), marks)
+	}
+	// The two forms are mutually exclusive: a room id, or a first unread message.
+	if marks[0].RoomID != "room-1" || marks[0].MessageID != "" {
+		t.Errorf("room-level mark = %+v", marks[0])
+	}
+	if marks[1].MessageID != "msg-7" || marks[1].RoomID != "" {
+		t.Errorf("message-level mark = %+v", marks[1])
+	}
+}
+
+func TestMarkUnreadFromSurfacesTheServersRefusal(t *testing.T) {
+	server := fakerc.New(t)
+	server.RejectUnread = true
+	client := newClient(t, server)
+	if _, err := client.LoginWithToken(context.Background(), fakerc.AuthToken); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	err := client.MarkUnreadFrom(context.Background(), "my-own-message")
+	if err == nil {
+		t.Fatal("MarkUnreadFrom: expected the refusal to surface")
+	}
+	var apiErr *rocket.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorType != "error-action-not-allowed" {
+		t.Errorf("error = %v, want error-action-not-allowed", err)
+	}
+}
+
 func TestRoomMembersUsesTheEndpointForTheRoomType(t *testing.T) {
 	server := fakerc.New(t)
 	server.AddMembers("room-1", "dana", "erin")

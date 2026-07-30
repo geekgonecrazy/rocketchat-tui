@@ -86,6 +86,7 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `/` | Filter the room list |
 | `g` | Load older messages |
 | `u` | Jump to the unread line |
+| `U` | Mark unread: the room under the sidebar cursor, or from the selected message |
 | `t` | Thread list (messages pane only) |
 | `esc` | Close thread / clear filter / leave the composer |
 | `ctrl+r` | Resync now |

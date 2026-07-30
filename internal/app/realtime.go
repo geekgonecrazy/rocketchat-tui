@@ -97,6 +97,11 @@ func (c *Core) handleIncomingMessage(msg rocket.Message) {
 // markReadIfUnread avoids a REST round trip per incoming message in an already
 // read room.
 func (c *Core) markReadIfUnread(roomID string) {
+	// A room the user marked unread on purpose stays unread until they leave and
+	// come back, however much traffic arrives meanwhile.
+	if c.heldUnread[roomID] {
+		return
+	}
 	room, found, err := c.store.Room(roomID)
 	if err != nil {
 		c.logger.Debug("unread check failed", "room", roomID, "err", err)

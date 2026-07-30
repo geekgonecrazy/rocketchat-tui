@@ -251,6 +251,32 @@ func (s *Store) CountAfter(roomID string, after time.Time) (int, error) {
 	return count, nil
 }
 
+// UnreadAnchor returns the last-seen marker that makes the message sent at from
+// the first unread one: the newest message in the timeline strictly older than
+// it.
+//
+// The divider is drawn before the first message with ts > ls, so anchoring on
+// the target's own timestamp would put the line one message too low. When
+// nothing older is cached there is no message to anchor to, so the millisecond
+// before the target is used — the resolution the schema stores, so no message
+// can ever fall between the two.
+func (s *Store) UnreadAnchor(roomID string, from time.Time) (time.Time, error) {
+	if from.IsZero() {
+		return time.Time{}, nil
+	}
+	var ms sql.NullInt64
+	err := s.db.QueryRow(`
+		SELECT MAX(ts) FROM messages
+		WHERE room_id = ? AND ts < ? AND `+timelineFilter, roomID, millis(from)).Scan(&ms)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, fmt.Errorf("store: unread anchor %s: %w", roomID, err)
+	}
+	if !ms.Valid || ms.Int64 == 0 {
+		return from.Add(-time.Millisecond), nil
+	}
+	return fromMillis(ms.Int64), nil
+}
+
 // HistoryState records how much of a room's history is cached.
 type HistoryState struct {
 	OldestTS   time.Time

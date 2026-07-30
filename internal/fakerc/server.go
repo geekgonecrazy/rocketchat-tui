@@ -38,6 +38,13 @@ type SentMessage struct {
 	ThreadID string
 }
 
+// UnreadMark is a subscriptions.unread call. Exactly one field is set: the
+// endpoint takes either a room or a first-unread message, never both.
+type UnreadMark struct {
+	RoomID    string
+	MessageID string
+}
+
 // wsConn serializes writes to one websocket. gorilla panics on concurrent
 // writes, and both request handling and broadcasts write to the same socket.
 type wsConn struct {
@@ -57,6 +64,9 @@ type Server struct {
 
 	// RequireTOTP makes the first password login fail with totp-required.
 	RequireTOTP bool
+	// RejectUnread makes subscriptions.unread fail the way a real server does
+	// for a message the caller wrote, so clients can be tested against a refusal.
+	RejectUnread bool
 
 	mu            sync.Mutex
 	rooms         []map[string]any
@@ -69,6 +79,7 @@ type Server struct {
 	notifications []Notification
 	sent          []SentMessage
 	readRooms     []string
+	unreadMarks   []UnreadMark
 	nextID        int
 	t             *testing.T
 }
@@ -96,6 +107,7 @@ func New(t *testing.T) *Server {
 	mux.HandleFunc("/api/v1/chat.getMessage", s.authed(s.handleGetMessage))
 	mux.HandleFunc("/api/v1/chat.sendMessage", s.authed(s.handleSendMessage))
 	mux.HandleFunc("/api/v1/subscriptions.read", s.authed(s.handleMarkRead))
+	mux.HandleFunc("/api/v1/subscriptions.unread", s.authed(s.handleMarkUnread))
 	mux.HandleFunc("/websocket", s.handleWebSocket)
 
 	s.Server = httptest.NewServer(mux)
@@ -364,6 +376,13 @@ func (s *Server) ReadRooms() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.readRooms...)
+}
+
+// UnreadMarks returns the mark-unread calls the client made, in order.
+func (s *Server) UnreadMarks() []UnreadMark {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]UnreadMark(nil), s.unreadMarks...)
 }
 
 func isoNow() string { return time.Now().UTC().Format(time.RFC3339Nano) }

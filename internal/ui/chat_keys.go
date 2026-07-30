@@ -176,6 +176,8 @@ func (m chatModel) handleRoomsKey(pressed string) (chatModel, tea.Cmd) {
 			cmd := m.openRoom(m.visible[m.roomCursor].ID)
 			return m, cmd
 		}
+	case "U":
+		return m.markRoomUnread()
 	}
 	return m, nil
 }
@@ -201,6 +203,8 @@ func (m chatModel) handleMessagesKey(pressed string) (chatModel, tea.Cmd) {
 		}
 	case "u":
 		m.positionAtUnread()
+	case "U":
+		return m.markUnreadHere()
 	case "t":
 		return m.toggleThreadList()
 	case "r", "+":
@@ -416,6 +420,53 @@ func (m chatModel) acceptMention() (chatModel, tea.Cmd) {
 		m.core.UserTyping(m.activeRoom)
 	}
 	return m, nil
+}
+
+// markRoomUnread flags the room under the sidebar cursor, which is how a
+// conversation goes back on the list without being opened first.
+func (m chatModel) markRoomUnread() (chatModel, tea.Cmd) {
+	if len(m.visible) == 0 || m.roomCursor >= len(m.visible) {
+		return m, nil
+	}
+	room := m.visible[m.roomCursor]
+	m.core.MarkUnread(room.ID)
+	return m.notify("marked "+room.Label()+" unread", false)
+}
+
+// markUnreadHere flags the open room unread from the selected message onwards,
+// falling back to the room as a whole when the cursor is not on one.
+func (m chatModel) markUnreadHere() (chatModel, tea.Cmd) {
+	if m.activeRoom == "" {
+		return m, nil
+	}
+	target, ok := m.selectedTimelineMessage()
+	if !ok {
+		m.core.MarkUnread(m.activeRoom)
+		return m.notify("marked "+m.room.Label()+" unread", false)
+	}
+	// The server refuses this and says only "not allowed", so the refusal is
+	// spelled out here rather than after a round trip. See docs §12.
+	if target.Own {
+		return m.notify("Rocket.Chat won't mark your own message unread", false)
+	}
+	m.core.MarkUnreadFrom(m.activeRoom, target.ID)
+	return m.notify("marked unread from here", false)
+}
+
+// selectedTimelineMessage is the timeline message under the cursor. Only the
+// timeline qualifies: the server tracks thread reads separately, so marking
+// unread from inside a thread would flag the room and mean something else.
+func (m chatModel) selectedTimelineMessage() (model.Message, bool) {
+	if m.mode != bodyTimeline || m.msgCursor < 0 || m.msgCursor >= len(m.messages) {
+		return model.Message{}, false
+	}
+	return m.messages[m.msgCursor], true
+}
+
+// notify shows a transient line in the status bar.
+func (m chatModel) notify(text string, isErr bool) (chatModel, tea.Cmd) {
+	m.notice, m.noticeErr = text, isErr
+	return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return clearNoticeMsg{} })
 }
 
 // openReactPicker opens the modal picker for the selected message.
