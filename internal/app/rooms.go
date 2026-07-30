@@ -511,6 +511,48 @@ func (c *Core) React(messageID, shortcode string, add bool) {
 	})
 }
 
+// Edit rewrites the text of a message the user already sent.
+//
+// Like React, nothing is written optimistically: the server owns whether an
+// edit is allowed at all (editing can be disabled, or time-limited), so the
+// timeline re-renders from the copy it sends back rather than from our guess.
+func (c *Core) Edit(roomID, messageID, text string) {
+	c.enqueue(func(c *Core) {
+		if roomID == "" || messageID == "" || text == "" {
+			return
+		}
+		threadID := c.currentThread
+
+		c.background(func(ctx context.Context) error {
+			updated, err := c.client.Update(ctx, roomID, messageID, text)
+			if err != nil {
+				return err
+			}
+			if updated.ID == "" {
+				// The response shape is not something to depend on: caching a
+				// message with no id would write a junk row. Ask for the message
+				// instead, the way React does after a reaction.
+				updated, err = c.client.GetMessage(ctx, messageID)
+				if err != nil {
+					return err
+				}
+			}
+			if err := c.store.SaveMessages([]rocket.Message{updated}); err != nil {
+				return err
+			}
+			c.enqueue(func(c *Core) {
+				if c.currentRoom == roomID {
+					c.emitTimeline(roomID)
+				}
+				if threadID != "" && c.currentThread == threadID {
+					c.emitThread(roomID, threadID)
+				}
+			})
+			return nil
+		})
+	})
+}
+
 // Send posts a message to a room, optionally into a thread.
 func (c *Core) Send(roomID, threadID, text string) {
 	c.enqueue(func(c *Core) {

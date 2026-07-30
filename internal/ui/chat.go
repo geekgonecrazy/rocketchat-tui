@@ -100,6 +100,13 @@ type chatModel struct {
 	composer textarea.Model
 	focus    focusArea
 
+	// editID is the message the composer is rewriting, empty when composing a
+	// new one. editDraft holds what the composer had before, so cancelling an
+	// edit gives it back, and editPrevCursorID the selection to put back with it.
+	editID           string
+	editDraft        string
+	editPrevCursorID string
+
 	// picker backs both the composer's inline emoji completer and the modal
 	// reaction picker; only one is ever open.
 	picker emojiPicker
@@ -164,8 +171,8 @@ func (m chatModel) composerHeight() int {
 		return 2 // divider + notice
 	}
 	lines := 1 + m.composer.Height() // divider + input
-	if m.threadID != "" && m.mode == bodyThread {
-		lines++ // thread context line
+	if m.editing() || (m.threadID != "" && m.mode == bodyThread) {
+		lines++ // edit banner, or thread context line
 	}
 	return lines
 }
@@ -266,6 +273,10 @@ func (m chatModel) handleCoreEvent(event app.Event) (chatModel, tea.Cmd) {
 			if m.jumpToUnread {
 				m.positionAtUnread()
 			}
+			if m.editTargetGone() {
+				m = m.abandonEdit()
+				return m.notify("that message is no longer here", false)
+			}
 		}
 
 	case app.ThreadListUpdated:
@@ -288,6 +299,10 @@ func (m chatModel) handleCoreEvent(event app.Event) (chatModel, tea.Cmd) {
 		m.threadReplies = e.Replies
 		if m.mode == bodyThread {
 			m.rebuildBody()
+			if m.editTargetGone() {
+				m = m.abandonEdit()
+				return m.notify("that message is no longer here", false)
+			}
 		}
 
 	case app.MembersUpdated:
@@ -392,6 +407,7 @@ func (m chatModel) View() string {
 		View:       m.composer.View(),
 		Prompt:     m.composerPrompt(),
 		ReplyingTo: m.threadContext(),
+		Editing:    m.editing(),
 		ReadOnly:   m.room.ReadOnly,
 	})
 
@@ -410,6 +426,11 @@ func (m chatModel) View() string {
 }
 
 func (m chatModel) composerPrompt() string {
+	if m.editing() {
+		// A different prompt, not just a banner: the box now holds text that is
+		// already posted, and losing track of that is how you edit by accident.
+		return "✎ "
+	}
 	if m.focus == focusComposer {
 		return "› "
 	}
@@ -460,10 +481,12 @@ func (m chatModel) statusBar() string {
 	}
 
 	hints := "enter thread · r react · ctrl+t threads · ? help"
-	switch m.focus {
-	case focusComposer:
-		hints = "enter send · @mention · #channel · :emoji · ctrl+t threads · ? help"
-	case focusRooms:
+	switch {
+	case m.editing():
+		hints = "enter save · esc cancel · ↑↓ another message"
+	case m.focus == focusComposer:
+		hints = "enter send · ↑ edit last · @mention · :emoji · ctrl+t threads · ? help"
+	case m.focus == focusRooms:
 		hints = "enter open · / filter · ctrl+t threads · ? help"
 	}
 

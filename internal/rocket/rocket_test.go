@@ -305,6 +305,60 @@ func TestSendMessageAndThread(t *testing.T) {
 	}
 }
 
+func TestUpdateMessage(t *testing.T) {
+	server := fakerc.New(t)
+	server.AddRoom("room-1", "c", "general", nil)
+	server.AddMessage("m1", "room-1", fakerc.Username, "teh typo", time.Now().Add(-time.Minute), nil)
+
+	client := newClient(t, server)
+	if _, err := client.LoginWithToken(context.Background(), fakerc.AuthToken); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	updated, err := client.Update(context.Background(), "room-1", "m1", "the typo")
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Msg != "the typo" {
+		t.Errorf("returned message = %q, want the corrected text", updated.Msg)
+	}
+	if updated.EditedAt == nil {
+		t.Error("an edited message should come back with editedAt set")
+	}
+	edits := server.EditedMessages()
+	if len(edits) != 1 || edits[0].RoomID != "room-1" || edits[0].MessageID != "m1" ||
+		edits[0].Text != "the typo" {
+		t.Errorf("server recorded %+v", edits)
+	}
+
+	// The room id is not optional on chat.update, and empty text means "delete"
+	// rather than "edit" — neither should reach the server by accident.
+	if _, err := client.Update(context.Background(), "", "m1", "text"); err == nil {
+		t.Error("expected an error without a room id")
+	}
+	if _, err := client.Update(context.Background(), "room-1", "m1", "   "); err == nil {
+		t.Error("expected an error for blank text")
+	}
+	if got := len(server.EditedMessages()); got != 1 {
+		t.Errorf("refused edits reached the server: %d calls", got)
+	}
+}
+
+func TestUpdateMessageSurfacesARefusal(t *testing.T) {
+	server := fakerc.New(t)
+	server.RejectEdit = true
+	server.AddRoom("room-1", "c", "general", nil)
+	server.AddMessage("m1", "room-1", fakerc.Username, "as posted", time.Now(), nil)
+
+	client := newClient(t, server)
+	if _, err := client.LoginWithToken(context.Background(), fakerc.AuthToken); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if _, err := client.Update(context.Background(), "room-1", "m1", "rewritten"); err == nil {
+		t.Fatal("expected the server's refusal to surface")
+	}
+}
+
 func TestMarkRead(t *testing.T) {
 	server := fakerc.New(t)
 	client := newClient(t, server)

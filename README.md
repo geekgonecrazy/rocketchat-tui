@@ -21,6 +21,8 @@ rooms and history immediately instead of an empty screen.
   to it when you open a room
 - Live typing indicators, sent and received the way the web client does it
 - Thread view: browse a room's threads, read a thread, and reply into it
+- Fix a typo: `↑` in an empty composer brings your last message back to edit,
+  again for the one before, staying inside whatever you are looking at
 - Emoji: shortcodes render as glyphs, `:jo` pops up an autocomplete while you
   type, and any message can be reacted to
 - Mentions: `@` autocompletes the people in the room, plus `@all` and `@here`;
@@ -79,6 +81,7 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `tab` / `shift+tab` | Move focus: rooms → messages → composer |
 | `↑ ↓` or `k j` | Move within the focused pane |
 | `enter` | Rooms: open · Messages: open or start a thread · Composer: send |
+| `↑` (empty composer) | Edit your last message; again for the one before, `↓` forward |
 | `ctrl+t` | Thread list for this room — works while typing |
 | `r` | React to the selected message |
 | `@` / `#` | Autocomplete a person or a channel while typing |
@@ -214,6 +217,25 @@ Any message can anchor one, whether or not it already has replies:
 
 `ctrl+t` lists every thread in the room, from any focus. `esc` goes back to the
 timeline.
+
+### Editing what you sent
+
+With the composer empty, `↑` loads your most recent message into it and marks it
+in the timeline. `↑` again steps further back through your own messages, `↓`
+comes forward, and past the newest it drops out of edit mode and gives you back
+whatever you had typed. `enter` saves, `esc` leaves the message alone.
+
+The gesture only ever offers messages from the context in front of you: in a
+thread it walks that thread's replies and its parent, never the channel's other
+messages, because the thread's composer posts into the thread. It also only
+offers your own messages, and only ones currently loaded — not something ten
+pages back that you cannot see. A draft in the composer is left alone: `↑` moves
+the cursor then, as it does inside a multi-line message being edited.
+
+Whether an edit is allowed at all is the server's call — editing can be disabled
+or time-limited — so nothing changes on screen until the server accepts it, and
+a refusal is shown in the status bar. Clearing the box and pressing `enter` is
+refused rather than treated as a delete.
 
 ## Architecture
 

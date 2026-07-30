@@ -283,6 +283,58 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"message": msg, "success": true})
 }
 
+func (s *Server) handleUpdateMessage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		RoomID    string `json:"roomId"`
+		MessageID string `json:"msgId"`
+		Text      string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"success": false, "error": "bad body"})
+		return
+	}
+
+	s.mu.Lock()
+	if s.RejectEdit {
+		s.mu.Unlock()
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success":   false,
+			"error":     "Message editing not allowed [error-message-editing-not-allowed]",
+			"errorType": "error-message-editing-not-allowed",
+		})
+		return
+	}
+	s.edited = append(s.edited, EditedMessage{
+		RoomID:    body.RoomID,
+		MessageID: body.MessageID,
+		Text:      body.Text,
+	})
+	var updated map[string]any
+	for _, msg := range s.messages {
+		if msg["_id"] == body.MessageID {
+			msg["msg"] = body.Text
+			// A real server stamps editedAt and bumps _updatedAt, which is what
+			// makes the timeline print "(edited)" and chat.syncMessages notice.
+			msg["editedAt"] = isoNow()
+			msg["editedBy"] = map[string]any{"_id": UserID, "username": Username}
+			msg["_updatedAt"] = isoNow()
+			updated = msg
+			break
+		}
+	}
+	s.mu.Unlock()
+
+	if updated == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"success":   false,
+			"error":     "Invalid message [error-invalid-message]",
+			"errorType": "error-invalid-message",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": updated, "success": true})
+}
+
 func (s *Server) handleMarkRead(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		RoomID string `json:"rid"`

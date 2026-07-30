@@ -438,3 +438,53 @@ func TestEndToEndExpiredSessionReturnsToLoginWithoutQuitting(t *testing.T) {
 
 	second.quit()
 }
+
+// Editing goes the whole way round: the composer recalls a message the user
+// sent, the correction reaches chat.update, and the timeline redraws from the
+// server's copy — "(edited)" included.
+func TestEndToEndEditsTheLastMessageWithUpArrow(t *testing.T) {
+	server := fakerc.New(t)
+	lastSeen := time.Now().Add(-time.Hour)
+	server.AddRoom("room-1", "c", "general", nil)
+	server.AddSubscription("room-1", "c", "general", 0, 0, lastSeen, nil)
+	server.AddMessage("m1", "room-1", "alice", "someone else's message", lastSeen, nil)
+
+	r := newRunner(t, server, t.TempDir(), true)
+	r.waitForOutput("Rocket.Chat")
+	r.send(tea.KeyMsg{Type: tea.KeyCtrlT})
+	r.sendRunes(fakerc.AuthToken)
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	r.waitForOutput("someone else's message")
+
+	// Post something of our own to correct afterwards.
+	r.sendRunes("teh first draft")
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+	waitUntil(t, "the message to be posted", func() bool {
+		return len(server.SentMessages()) == 1
+	})
+
+	// ↑ in the empty composer pulls our own message back, not alice's.
+	r.send(tea.KeyMsg{Type: tea.KeyUp})
+	r.waitForOutput("editing a sent message")
+
+	// Rewrite it and save.
+	for i := 0; i < len("teh first draft"); i++ {
+		r.send(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	r.sendRunes("the first draft")
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	waitUntil(t, "the edit to reach the server", func() bool {
+		for _, edit := range server.EditedMessages() {
+			if edit.RoomID == "room-1" && edit.Text == "the first draft" {
+				return true
+			}
+		}
+		return false
+	})
+
+	// The server's copy is what redraws, so the edit marker appears with it.
+	r.waitForOutput("(edited)")
+	r.quit()
+}

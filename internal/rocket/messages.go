@@ -173,6 +173,38 @@ func (c *Client) React(ctx context.Context, messageID, shortcode string, add boo
 	}, nil)
 }
 
+// Update rewrites the text of a message and returns the server's stored copy.
+//
+// The room id is required alongside the message id: chat.update takes both, and
+// rejects the call outright without the room.
+func (c *Client) Update(ctx context.Context, roomID, messageID, text string) (Message, error) {
+	if roomID == "" || messageID == "" {
+		return Message{}, fmt.Errorf("rocket: update requires a room id and a message id")
+	}
+	if strings.TrimSpace(text) == "" {
+		// Empty text deletes the message on the server. That is a different
+		// operation with a different confirmation, so it is refused here rather
+		// than reached by accident through an edit.
+		return Message{}, fmt.Errorf("rocket: update requires text")
+	}
+	var resp struct {
+		Message Message `json:"message"`
+	}
+	err := c.do(ctx, request{
+		method:   "POST",
+		endpoint: "chat.update",
+		body: map[string]any{
+			"roomId": roomID,
+			"msgId":  messageID,
+			"text":   text,
+		},
+	}, &resp)
+	if err != nil {
+		return Message{}, err
+	}
+	return resp.Message, nil
+}
+
 // SendOptions describes an outgoing message. Set ThreadID to reply in a thread;
 // set AlsoSendToChannel to mirror the reply into the main timeline, matching the
 // web client's checkbox.

@@ -466,6 +466,97 @@ func TestSendPostsMessageAndShowsIt(t *testing.T) {
 	}
 }
 
+func TestEditRewritesTheMessageInTheTimeline(t *testing.T) {
+	h := newHarness(t)
+	h.seedRoom("room-1", "general", 0, 0, time.Now().Add(-time.Hour))
+
+	h.start()
+	h.waitConnected()
+	h.core.OpenRoom("room-1")
+	waitFor(t, "room open", func() (app.TimelineUpdated, bool) { return h.lastTimeline("room-1") })
+
+	h.core.Send("room-1", "", "teh first draft")
+	sent := waitFor(t, "sent message in timeline", func() (app.TimelineUpdated, bool) {
+		snapshot, ok := h.lastTimeline("room-1")
+		if !ok {
+			return snapshot, false
+		}
+		for _, msg := range snapshot.Messages {
+			if msg.Text == "teh first draft" {
+				return snapshot, true
+			}
+		}
+		return snapshot, false
+	})
+
+	var target model.Message
+	for _, msg := range sent.Messages {
+		if msg.Text == "teh first draft" {
+			target = msg
+		}
+	}
+
+	h.core.Edit("room-1", target.ID, "the first draft")
+
+	timeline := waitFor(t, "the edit in the timeline", func() (app.TimelineUpdated, bool) {
+		snapshot, ok := h.lastTimeline("room-1")
+		if !ok {
+			return snapshot, false
+		}
+		for _, msg := range snapshot.Messages {
+			if msg.ID == target.ID && msg.Text == "the first draft" {
+				return snapshot, true
+			}
+		}
+		return snapshot, false
+	})
+
+	for _, msg := range timeline.Messages {
+		if msg.ID != target.ID {
+			continue
+		}
+		// The server's editedAt is what makes the timeline print "(edited)", so
+		// it has to survive the round trip through the cache.
+		if msg.EditedAt.IsZero() {
+			t.Error("the edited message came back without an edit stamp")
+		}
+	}
+	if edits := h.server.EditedMessages(); len(edits) != 1 || edits[0].RoomID != "room-1" {
+		t.Errorf("server recorded %+v", edits)
+	}
+}
+
+func TestEditRefusedByTheServerLeavesTheMessageAlone(t *testing.T) {
+	h := newHarness(t)
+	base := time.Now().Add(-time.Hour)
+	h.seedRoom("room-1", "general", 0, 0, base)
+	h.server.AddMessage("m1", "room-1", "tester", "as posted", base, nil)
+	h.server.RejectEdit = true
+
+	h.start()
+	h.waitConnected()
+	h.core.OpenRoom("room-1")
+	waitFor(t, "room open", func() (app.TimelineUpdated, bool) {
+		snapshot, ok := h.lastTimeline("room-1")
+		return snapshot, ok && len(snapshot.Messages) > 0
+	})
+
+	h.core.Edit("room-1", "m1", "rewritten")
+
+	// The refusal reaches the user, and nothing local pretends otherwise: the
+	// message still reads as it was posted.
+	waitFor(t, "the refusal to be reported", func() (app.Notice, bool) {
+		notice, ok := h.lastNotice()
+		return notice, ok && strings.Contains(notice.Text, "editing")
+	})
+	timeline, _ := h.lastTimeline("room-1")
+	for _, msg := range timeline.Messages {
+		if msg.ID == "m1" && msg.Text != "as posted" {
+			t.Errorf("a refused edit changed the timeline to %q", msg.Text)
+		}
+	}
+}
+
 func TestThreadsLoadAndReplyTargetsThread(t *testing.T) {
 	h := newHarness(t)
 	base := time.Now().Add(-time.Hour)

@@ -389,6 +389,15 @@ Things not yet settled against a live server:
   from another user in the fixture channel.
 - **Whether `subscriptions.read` accepts `roomId` as well as `rid`.** We send
   `rid`, which works; the alternative is untested.
+- **How `chat.update` refuses an edit on the live target.** Editing can be
+  disabled outright (`Message_AllowEditing`) or time-limited
+  (`Message_AllowEditing_BlockEditInMinutes`), and neither the code nor the
+  wording of the refusal has been observed here. We apply no client-side limit —
+  the server's message goes to the status bar as-is — so the first live refusal
+  will say whether that reads well enough or needs translating the way §12's
+  does. Also unconfirmed: whether the response really carries the updated
+  message. `Core.Edit` re-fetches with `chat.getMessage` when it does not,
+  rather than caching a message with no id.
 - **Whether the per-message `subscriptions.unread` form works for another user's
   message.** Only the own-message case was tried, and it was refused. The client
   now sends this form (`U` on a selected message), so the first live use will

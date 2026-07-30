@@ -38,6 +38,13 @@ type SentMessage struct {
 	ThreadID string
 }
 
+// EditedMessage is a chat.update call the client made.
+type EditedMessage struct {
+	RoomID    string
+	MessageID string
+	Text      string
+}
+
 // UnreadMark is a subscriptions.unread call. Exactly one field is set: the
 // endpoint takes either a room or a first-unread message, never both.
 type UnreadMark struct {
@@ -67,6 +74,9 @@ type Server struct {
 	// RejectUnread makes subscriptions.unread fail the way a real server does
 	// for a message the caller wrote, so clients can be tested against a refusal.
 	RejectUnread bool
+	// RejectEdit makes chat.update fail the way a server with editing disabled
+	// or time-limited does.
+	RejectEdit bool
 
 	mu            sync.Mutex
 	rooms         []map[string]any
@@ -78,6 +88,7 @@ type Server struct {
 	conns         []*wsConn
 	notifications []Notification
 	sent          []SentMessage
+	edited        []EditedMessage
 	readRooms     []string
 	unreadMarks   []UnreadMark
 	fileRequests  int
@@ -107,6 +118,7 @@ func New(t *testing.T) *Server {
 	mux.HandleFunc("/api/v1/chat.getThreadMessages", s.authed(s.handleThreadMessages))
 	mux.HandleFunc("/api/v1/chat.getMessage", s.authed(s.handleGetMessage))
 	mux.HandleFunc("/api/v1/chat.sendMessage", s.authed(s.handleSendMessage))
+	mux.HandleFunc("/api/v1/chat.update", s.authed(s.handleUpdateMessage))
 	mux.HandleFunc("/api/v1/subscriptions.read", s.authed(s.handleMarkRead))
 	mux.HandleFunc("/api/v1/subscriptions.unread", s.authed(s.handleMarkUnread))
 	mux.HandleFunc("/file-upload/", s.authed(s.handleFileUpload))
@@ -364,6 +376,13 @@ func (s *Server) SentMessages() []SentMessage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]SentMessage(nil), s.sent...)
+}
+
+// EditedMessages returns the chat.update calls the client made, in order.
+func (s *Server) EditedMessages() []EditedMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]EditedMessage(nil), s.edited...)
 }
 
 // MemberPaths returns the members endpoints the client called, in order.

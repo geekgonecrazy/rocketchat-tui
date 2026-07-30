@@ -91,9 +91,12 @@ type ComposerState struct {
 	Width int
 	// View is the pre-rendered input widget; the model owns the widget, this
 	// package only frames it.
-	View        string
-	Prompt      string
-	ReplyingTo  string
+	View       string
+	Prompt     string
+	ReplyingTo string
+	// Editing marks the box as rewriting a posted message rather than composing
+	// a new one.
+	Editing     bool
 	ReadOnly    bool
 	Placeholder string
 }
@@ -109,7 +112,14 @@ func Composer(theme Theme, state ComposerState) []string {
 		lines = append(lines, theme.Faint.Render(Truncate("  This room is read-only.", state.Width)))
 		return lines
 	}
-	if state.ReplyingTo != "" {
+	// The edit banner replaces the thread hint rather than stacking on it: while
+	// editing, which message the box holds matters more than where a new one
+	// would go, and the composer must not change height between the two.
+	switch {
+	case state.Editing:
+		lines = append(lines, theme.UnreadRule.Render(
+			Truncate("  ✎ editing a sent message — enter saves, esc cancels", state.Width)))
+	case state.ReplyingTo != "":
 		lines = append(lines, theme.ThreadHint.Render(
 			Truncate("  ↳ replying in thread: "+state.ReplyingTo, state.Width)))
 	}
@@ -176,6 +186,7 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"tab", "move focus: rooms → messages → composer"},
 		{"↑ ↓ / k j", "move within the focused pane"},
 		{"enter", "rooms: open · messages: open or start a thread · composer: send"},
+		{"↑ (composer)", "edit your last message; again for the one before"},
 		{"ctrl+t", "threads in this room — works while typing"},
 		{"r", "react to the selected message"},
 		{"alt+enter", "newline in the composer"},
@@ -240,6 +251,19 @@ func HelpOverlay(theme Theme, width int) []string {
 			"click it) and press enter, then type your reply.", max(1, width-4))),
 		"  "+theme.Muted.Render(Truncate(
 			"ctrl+t lists every thread in the room. esc returns to the timeline.", max(1, width-4))),
+	)
+
+	lines = append(lines,
+		"",
+		theme.Title.Render("  Editing"),
+		"  "+theme.Muted.Render(Truncate(
+			"With the composer empty, ↑ loads your last message into it; press ↑", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"again to go further back and ↓ to come forward. enter saves the edit,", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"esc leaves it alone. Inside a thread you walk that thread's replies,", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"never the channel's messages.", max(1, width-4))),
 	)
 	return lines
 }

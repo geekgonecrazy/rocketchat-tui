@@ -229,14 +229,36 @@ func (m chatModel) handleMessagesKey(pressed string) (chatModel, tea.Cmd) {
 func (m chatModel) handleComposerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 	switch msg.String() {
 	case "enter":
+		if m.editing() {
+			return m.commitEdit()
+		}
 		return m.send()
 	case "esc":
+		// While editing, esc means "leave that message alone" — it must not also
+		// close the thread the user is editing inside.
+		if m.editing() {
+			return m.cancelEdit()
+		}
 		if m.mode == bodyThread {
 			return m.showTimeline()
 		}
 		m.focus = focusMessages
 		m.composer.Blur()
 		return m, nil
+	case "up":
+		// An empty composer has nothing to move a cursor through, so ↑ is free
+		// to mean "bring my last message back".
+		if m.editing() {
+			if m.atComposerTop() {
+				return m.stepEdit(-1)
+			}
+		} else if strings.TrimSpace(m.composer.Value()) == "" {
+			return m.beginEdit()
+		}
+	case "down":
+		if m.editing() && m.atComposerBottom() {
+			return m.stepEdit(1)
+		}
 	case "pgup":
 		m.scrollBy(-m.bodyHeight() / 2)
 		return m, nil
@@ -266,7 +288,8 @@ func (m chatModel) handleComposerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 	}
 
 	// Typing indicators follow actual edits, the way the web client does it.
-	if after != before && m.activeRoom != "" {
+	// Rewriting a message you already sent is not composing, so it stays quiet.
+	if after != before && m.activeRoom != "" && !m.editing() {
 		if strings.TrimSpace(after) == "" {
 			m.core.StopTyping(m.activeRoom)
 		} else {
@@ -294,6 +317,7 @@ func (m *chatModel) openRoom(roomID string) tea.Cmd {
 	m.threads = nil
 	m.msgCursor = -1
 	m.cursorMsgID = ""
+	m.editID, m.editDraft, m.editPrevCursorID = "", "", ""
 	m.scroll = 0
 	m.pinnedToBottom = true
 	m.jumpToUnread = true
@@ -341,6 +365,9 @@ func (m chatModel) toggleThreadList() (chatModel, tea.Cmd) {
 	if m.mode == bodyThreadList {
 		return m.showTimeline()
 	}
+	// The candidates are per context, so a pending edit does not survive the
+	// move to one where its message is not on screen.
+	m = m.abandonEdit()
 	m.mode = bodyThreadList
 	m.threadsIndex = 0
 	m.scroll = 0
@@ -351,6 +378,7 @@ func (m chatModel) toggleThreadList() (chatModel, tea.Cmd) {
 }
 
 func (m chatModel) showTimeline() (chatModel, tea.Cmd) {
+	m = m.abandonEdit()
 	m.mode = bodyTimeline
 	m.threadID = ""
 	m.core.CloseThread()
@@ -383,6 +411,7 @@ func (m chatModel) openSelectedThread() (chatModel, tea.Cmd) {
 		return m, nil
 	}
 
+	m = m.abandonEdit()
 	m.threadID = threadID
 	m.mode = bodyThread
 	m.threadCursor = -1

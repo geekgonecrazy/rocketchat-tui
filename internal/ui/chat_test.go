@@ -1177,3 +1177,266 @@ func TestChatRefusesToMarkUnreadFromYourOwnMessage(t *testing.T) {
 		t.Errorf("notice = %q, want the refusal", m.notice)
 	}
 }
+
+// ---- editing ----------------------------------------------------------------
+
+// editableTimeline is a room where two of the four messages are the user's own,
+// so recall has to skip past other people and system lines to find them.
+func editableTimeline() app.TimelineUpdated {
+	base := time.Now().Add(-time.Hour)
+	return app.TimelineUpdated{
+		RoomID: "r1",
+		Room:   model.Room{ID: "r1", DisplayName: "general", Kind: model.KindChannel},
+		Messages: []model.Message{
+			{ID: "m1", Username: "tester", Text: "first of mine", Own: true, At: base},
+			{ID: "m2", Username: "alice", Author: "Alice", Text: "not yours", At: base.Add(time.Minute)},
+			{ID: "m3", Username: "tester", Text: "joined the channel", Own: true,
+				SystemType: "uj", At: base.Add(2 * time.Minute)},
+			{ID: "m4", Username: "tester", Text: "second of mine", Own: true,
+				At: base.Add(3 * time.Minute)},
+		},
+	}
+}
+
+func composing(t *testing.T) chatModel {
+	t.Helper()
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, editableTimeline())
+	m.focus = focusComposer
+	m.composer.Focus()
+	return m
+}
+
+func TestComposerUpRecallsOwnMessagesNewestFirst(t *testing.T) {
+	m := composing(t)
+
+	m, _ = m.Update(press("up"))
+	if m.editID != "m4" || m.composer.Value() != "second of mine" {
+		t.Fatalf("first ↑ edited %q with %q, want m4", m.editID, m.composer.Value())
+	}
+	// The message being rewritten is pointed at in the timeline, not just held
+	// in the box.
+	if m.cursorMsgID != "m4" {
+		t.Errorf("timeline selection = %q, want m4", m.cursorMsgID)
+	}
+
+	// Again steps back past someone else's message and past a system line.
+	m, _ = m.Update(press("up"))
+	if m.editID != "m1" || m.composer.Value() != "first of mine" {
+		t.Fatalf("second ↑ edited %q with %q, want m1", m.editID, m.composer.Value())
+	}
+
+	// There is nothing older of ours; the oldest stays loaded rather than the
+	// composer emptying itself.
+	m, _ = m.Update(press("up"))
+	if m.editID != "m1" || m.composer.Value() != "first of mine" {
+		t.Errorf("↑ past the oldest changed the edit to %q/%q", m.editID, m.composer.Value())
+	}
+}
+
+func TestComposerDownWalksBackAndLeavesEditMode(t *testing.T) {
+	m := composing(t)
+	m, _ = m.Update(press("up"))
+	m, _ = m.Update(press("up")) // on m1
+
+	m, _ = m.Update(press("down"))
+	if m.editID != "m4" {
+		t.Fatalf("↓ moved to %q, want m4", m.editID)
+	}
+
+	m, _ = m.Update(press("down"))
+	if m.editing() {
+		t.Errorf("↓ past the newest should leave edit mode, still on %q", m.editID)
+	}
+	if m.composer.Value() != "" {
+		t.Errorf("composer = %q, want the empty draft back", m.composer.Value())
+	}
+}
+
+func TestComposerUpKeepsATypedDraft(t *testing.T) {
+	m := composing(t)
+	for _, r := range "half a thought" {
+		m, _ = m.Update(press(string(r)))
+	}
+
+	m, _ = m.Update(press("up"))
+	if m.editing() {
+		t.Error("↑ with a draft in the box must not recall a message over it")
+	}
+	if m.composer.Value() != "half a thought" {
+		t.Errorf("composer = %q, want the draft untouched", m.composer.Value())
+	}
+}
+
+func TestEscapeCancelsAnEditWithoutClosingTheThread(t *testing.T) {
+	m := composing(t)
+	m, _ = m.Update(press("up"))
+	for _, r := range " more" {
+		m, _ = m.Update(press(string(r)))
+	}
+
+	m, _ = m.Update(press("esc"))
+	if m.editing() {
+		t.Error("esc should leave edit mode")
+	}
+	if m.composer.Value() != "" {
+		t.Errorf("composer = %q, want the edit discarded", m.composer.Value())
+	}
+	// esc while editing means "leave that message alone", not "leave the room".
+	if m.focus != focusComposer {
+		t.Errorf("focus = %v, want the composer to keep it", m.focus)
+	}
+}
+
+func TestEditRefusesToSaveNothing(t *testing.T) {
+	m := composing(t)
+	m, _ = m.Update(press("up"))
+	m.composer.SetValue("")
+
+	m, _ = m.Update(press("enter"))
+	if !m.editing() {
+		t.Error("an empty edit should be refused, not committed")
+	}
+	if !strings.Contains(m.notice, "empty") {
+		t.Errorf("notice = %q, want an explanation", m.notice)
+	}
+}
+
+func TestEditCommitClearsTheComposer(t *testing.T) {
+	m := composing(t)
+	m, _ = m.Update(press("up"))
+	m.composer.SetValue("second of mine, corrected")
+
+	m, _ = m.Update(press("enter"))
+	if m.editing() {
+		t.Error("committing should leave edit mode")
+	}
+	if m.composer.Value() != "" {
+		t.Errorf("composer = %q, want it clear for the next message", m.composer.Value())
+	}
+	if !strings.Contains(m.notice, "saved") {
+		t.Errorf("notice = %q, want confirmation", m.notice)
+	}
+}
+
+func TestEditModeIsVisible(t *testing.T) {
+	m := composing(t)
+	if strings.Contains(m.View(), "editing a sent message") {
+		t.Fatal("the edit banner is showing before anything is being edited")
+	}
+
+	m, _ = m.Update(press("up"))
+	view := m.View()
+	if !strings.Contains(view, "editing a sent message") {
+		t.Errorf("no edit banner while editing:\n%s", view)
+	}
+	if !strings.Contains(view, "esc cancel") {
+		t.Errorf("status bar does not say how to get out:\n%s", view)
+	}
+}
+
+// The composer inside a thread posts into that thread, so recall there has to
+// stay inside it. Reaching a channel message would mean editing something that
+// is not even on screen.
+func TestEditInAThreadRecallsThreadMessagesOnly(t *testing.T) {
+	m := composing(t)
+	m.mode = bodyThread
+	m.threadID = "m4"
+	m = event(m, app.ThreadUpdated{
+		RoomID:   "r1",
+		ThreadID: "m4",
+		Parent:   model.Message{ID: "m4", Username: "tester", Text: "second of mine", Own: true, At: time.Now()},
+		Replies: []model.Message{
+			{ID: "t1", Username: "alice", Author: "Alice", Text: "their reply", At: time.Now()},
+			{ID: "t2", Username: "tester", Text: "my reply", Own: true, At: time.Now()},
+		},
+	})
+
+	m, _ = m.Update(press("up"))
+	if m.editID != "t2" || m.composer.Value() != "my reply" {
+		t.Fatalf("↑ in a thread edited %q/%q, want the newest reply of ours",
+			m.editID, m.composer.Value())
+	}
+
+	// Further back is the thread parent, which heads the pane and so is on
+	// screen — and then nothing. The room's other messages are out of reach.
+	m, _ = m.Update(press("up"))
+	if m.editID != "m4" {
+		t.Fatalf("↑ again edited %q, want the thread parent", m.editID)
+	}
+	m, _ = m.Update(press("up"))
+	if m.editID != "m4" {
+		t.Errorf("↑ escaped the thread and reached %q", m.editID)
+	}
+}
+
+func TestThreadListOffersNothingToEdit(t *testing.T) {
+	m := composing(t)
+	m = event(m, app.ThreadListUpdated{
+		RoomID: "r1",
+		Threads: []model.Message{
+			{ID: "m4", Username: "tester", Text: "second of mine", Own: true,
+				ThreadCount: 2, At: time.Now()},
+		},
+	})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	if m.mode != bodyThreadList {
+		t.Fatalf("mode = %v, want the thread list", m.mode)
+	}
+
+	m, _ = m.Update(press("up"))
+	if m.editing() {
+		t.Errorf("the thread list recalled %q; its rows are not what the composer addresses", m.editID)
+	}
+}
+
+func TestLeavingTheRoomAbandonsAnEdit(t *testing.T) {
+	m := composing(t)
+	m, _ = m.Update(press("up"))
+
+	m.openRoom("r2")
+	if m.editing() {
+		t.Errorf("an edit survived the move to another room: %q", m.editID)
+	}
+	if m.composer.Value() != "" {
+		t.Errorf("composer = %q, want a fresh box in the new room", m.composer.Value())
+	}
+}
+
+func TestEditIsAbandonedWhenTheMessageGoesAway(t *testing.T) {
+	m := composing(t)
+	m, _ = m.Update(press("up"))
+
+	// The message is deleted elsewhere and the timeline comes back without it.
+	gone := editableTimeline()
+	gone.Messages = gone.Messages[:3]
+	m = event(m, gone)
+
+	if m.editing() {
+		t.Errorf("still editing %q after it left the timeline", m.editID)
+	}
+	if !strings.Contains(m.notice, "no longer here") {
+		t.Errorf("notice = %q, want an explanation", m.notice)
+	}
+}
+
+func TestReadOnlyRoomHasNothingToEdit(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID: "r1",
+		Room:   model.Room{ID: "r1", DisplayName: "announcements", ReadOnly: true},
+		Messages: []model.Message{
+			{ID: "m1", Username: "tester", Text: "posted before it locked", Own: true,
+				At: time.Now().Add(-time.Hour)},
+		},
+	})
+	m.focus = focusComposer
+	m.composer.Focus()
+
+	m, _ = m.Update(press("up"))
+	if m.editing() {
+		t.Error("a read-only room accepts no edits, so it should offer none")
+	}
+}
