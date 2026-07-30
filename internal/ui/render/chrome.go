@@ -296,6 +296,23 @@ func HelpOverlay(theme Theme, width int) []string {
 
 	lines = append(lines,
 		"",
+		theme.Title.Render("  Slash commands"),
+		"  "+theme.Muted.Render(Truncate(
+			"Type / in an empty composer and every command this server offers", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"appears — its own, plus whatever apps are installed. tab completes;", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"enter runs a command you have typed out in full. After the first", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"space, @ and # complete arguments as usual.", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"/leave, /invite, /topic and the rest work even where the server does", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"not offer them. /exit leaves rctui, /open jumps to a room.", max(1, width-4))),
+	)
+
+	lines = append(lines,
+		"",
 		theme.Title.Render("  Editing"),
 		"  "+theme.Muted.Render(Truncate(
 			"With the composer empty, ↑ loads your last message into it; press ↑", max(1, width-4))),

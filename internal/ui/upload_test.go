@@ -183,6 +183,9 @@ func TestBareUploadCommandOpensThePrompt(t *testing.T) {
 	}
 }
 
+// The upload command is parsed by the same rule as every other slash command
+// now, so what matters here is that the rule still recognises the shapes a path
+// arrives in — a path is the one argument likely to contain slashes and spaces.
 func TestUploadCommandRecognition(t *testing.T) {
 	cases := []struct {
 		value string
@@ -201,9 +204,10 @@ func TestUploadCommandRecognition(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		path, ok := uploadCommand(tc.value)
-		if ok != tc.ok || path != tc.path {
-			t.Errorf("uploadCommand(%q) = (%q, %v), want (%q, %v)", tc.value, path, ok, tc.path, tc.ok)
+		name, path, ok := model.ParseCommand(tc.value)
+		if ok != tc.ok || (ok && name != "upload") || path != tc.path {
+			t.Errorf("ParseCommand(%q) = (%q, %q, %v), want (upload, %q, %v)",
+				tc.value, name, path, ok, tc.path, tc.ok)
 		}
 	}
 }

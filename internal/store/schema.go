@@ -89,6 +89,19 @@ var migrations = []string{
 		PRIMARY KEY (room_id, username)
 	);
 	`,
+	`
+	-- The slash commands this server offers. Which commands exist is a property
+	-- of the deployment — built-ins plus whatever apps are installed — so it has
+	-- to be discovered; caching it is what lets the composer's "/" completer be
+	-- complete before, or without, that round trip.
+	CREATE TABLE IF NOT EXISTS commands (
+		name             TEXT PRIMARY KEY,
+		params           TEXT NOT NULL DEFAULT '',
+		description      TEXT NOT NULL DEFAULT '',
+		client_only      INTEGER NOT NULL DEFAULT 0,
+		provides_preview INTEGER NOT NULL DEFAULT 0
+	);
+	`,
 }
 
 func (s *Store) migrate() error {

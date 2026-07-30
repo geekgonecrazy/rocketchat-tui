@@ -80,6 +80,10 @@ type Core struct {
 	// cannot pin the indicator on forever.
 	typists map[string]map[string]time.Time
 
+	// commands is the slash command registry: what we implement merged with what
+	// the server advertises. See commands.go for the precedence rules.
+	commands []model.Command
+
 	// membersSynced is when each room's roster was last fetched, so revisiting a
 	// room does not re-list its members on every open.
 	membersSynced map[string]time.Time
@@ -238,6 +242,7 @@ func (c *Core) Start(userID, username string) {
 
 		// Offline-first: render whatever the cache holds before any network call.
 		c.refreshRooms()
+		c.loadCommands()
 		c.emit(SessionReady{Username: username, ServerURL: c.client.ServerURL()})
 
 		c.startRealtime()

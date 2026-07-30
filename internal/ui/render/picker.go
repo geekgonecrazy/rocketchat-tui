@@ -121,6 +121,65 @@ func MentionPicker(theme Theme, state MentionPickerState) []string {
 	return lines
 }
 
+// CommandPickerState is the input for the composer's "/" completer.
+type CommandPickerState struct {
+	// Matches are the candidates, best first.
+	Matches []model.Command
+	// Cursor is the highlighted index.
+	Cursor int
+	Width  int
+	// MaxRows bounds the height; the list scrolls to keep the cursor visible.
+	MaxRows int
+}
+
+// CommandPicker renders the slash command list, floating above the composer the
+// way the other completers do.
+//
+// Each row is the command with its usage on the left and what it does on the
+// right, because the point of the list is that the reader has never seen half of
+// these: which commands exist is a property of the server. Usages are aligned to
+// a common column so the descriptions read as a column of prose rather than a
+// ragged edge.
+func CommandPicker(theme Theme, state CommandPickerState) []string {
+	if state.Width <= 0 || state.MaxRows <= 0 || len(state.Matches) == 0 {
+		return nil
+	}
+
+	rows := min(state.MaxRows, len(state.Matches))
+	offset := 0
+	if state.Cursor >= rows {
+		offset = state.Cursor - rows + 1
+	}
+	if offset > len(state.Matches)-rows {
+		offset = max(0, len(state.Matches)-rows)
+	}
+
+	// Only the visible rows set the column: a long usage scrolled out of sight
+	// should not indent everything that is on screen.
+	usageWidth := 0
+	for row := 0; row < rows; row++ {
+		usageWidth = max(usageWidth, Width(state.Matches[offset+row].Usage()))
+	}
+	usageWidth = min(usageWidth, max(8, state.Width/2))
+
+	lines := make([]string, 0, rows)
+	for row := 0; row < rows; row++ {
+		index := offset + row
+		command := state.Matches[index]
+
+		label := Pad(Truncate(command.Usage(), usageWidth), usageWidth)
+		if command.Description != "" {
+			label += "  " + command.Description
+		}
+		if index == state.Cursor {
+			lines = append(lines, theme.SidebarSelected.Render(Pad("  "+Truncate(label, state.Width-2), state.Width)))
+			continue
+		}
+		lines = append(lines, theme.Muted.Render(Pad("  "+Truncate(label, state.Width-2), state.Width)))
+	}
+	return lines
+}
+
 // PathMatchesState is the input for the attach prompt's completion hint.
 type PathMatchesState struct {
 	// Matches are the directory entries the typed path could still become.

@@ -27,6 +27,9 @@ rooms and history immediately instead of an empty screen.
   type, and any message can be reacted to
 - Mentions: `@` autocompletes the people in the room, plus `@all` and `@here`;
   `#` autocompletes the rooms you are in
+- Slash commands: `/` lists everything this server offers — its own commands and
+  any an app has added — plus the ones rctui carries itself, from `/leave` and
+  `/invite` down to `/exit`
 - Send files: `ctrl+o` gives you a path prompt with tab-completion, attach as
   many as you like, and nothing uploads until you send the message
 - Works offline against the local cache; reconnects and resyncs automatically
@@ -87,6 +90,7 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `ctrl+t` | Thread list for this room — works while typing |
 | `r` | React to the selected message |
 | `@` / `#` | Autocomplete a person or a channel while typing |
+| `/` (empty composer) | List the slash commands this server offers |
 | `alt+enter` | Newline in the composer |
 | `/` | Filter the room list |
 | `g` | Load older messages |
@@ -250,6 +254,48 @@ first few hundred bytes when there is no extension to go on. That last part
 matters more than it sounds: an image uploaded as `application/octet-stream` is
 an image no client will ever draw inline.
 
+### Slash commands
+
+Type `/` as the first character in the composer and the list appears:
+
+```
+  /invite @username…  add people to this room
+  /join #channel      join a public channel
+  /leave              leave this room
+  /open <room>        jump to a room in the sidebar
+```
+
+`tab` completes what is highlighted. `enter` completes it too, except when you
+have already typed the command out in full — then `enter` runs it, so `/exit`
+does not need a second keystroke to mean what it says. The list closes at the
+first space, which hands the rest of the line back to `@` and `#`: `/invite @ja`
+completes the username the same way a message does.
+
+Which commands exist is a property of the server, not of this client, so they are
+discovered: `commands.list` is fetched at login and cached, and the result is
+merged with what rctui implements. Three kinds end up in one list:
+
+| Kind | Examples | Who runs it |
+| --- | --- | --- |
+| the client's own | `/exit`, `/quit`, `/upload`, `/open`, `/help` | rctui — no server has an opinion about quitting your terminal client |
+| the server's | whatever `commands.list` reports, apps included | the server, through `commands.run` |
+| rctui's fallbacks | `/leave`, `/part`, `/hide`, `/join`, `/invite`, `/kick`, `/topic`, `/archive`, `/unarchive`, `/create`, `/msg`, `/shrug`, `/tableflip`, `/unflip`, `/lennyface` | rctui, over REST, but only where the server offers no version of its own |
+
+Precedence runs one way. The client's own commands are never displaced — a
+server registration of `/open` is flagged `clientOnly` for exactly that reason.
+Everywhere else the server wins: it is the authority on what `/leave` means on
+that deployment, and its description replaces ours in the list. A command the
+server flags `clientOnly` that rctui does not implement cannot run anywhere, so
+it is kept out of the list and invoking it says so.
+
+A command nobody recognises is never posted as a message. `/inivte @jane` says
+"no such command" and leaves the line in the composer to be corrected, because
+sending a typo to the room is both useless and public.
+
+Commands work in read-only rooms — leaving one is exactly what a read-only room
+is for — and `/leave` and `/hide` take the room out of the sidebar immediately
+rather than at the next resync.
+
 ### Starting a thread
 
 Any message can anchor one, whether or not it already has replies:
@@ -346,6 +392,11 @@ discrepancies. The most important ones:
   entirely, or years stale. So a room can be unread with no number and no anchor,
   and any count derived by tallying messages after `ls` is really just a report of
   how much history you loaded.
+- **Slash commands are a server property.** `commands.list` differs per
+  deployment (built-ins plus installed apps), pages, and can be permission-gated,
+  so it is discovered rather than assumed and a refusal leaves the client's own
+  commands working. `clientOnly` on an entry means `commands.run` will not
+  execute it — that is a job for whichever client implements it.
 - **Client and server clocks disagree** — 94 seconds of skew measured in
   development. Unread state compares a client-held marker against server
   timestamps, so the marker is anchored to server data, never to `time.Now()`.
@@ -388,7 +439,7 @@ Two build-tagged suites run against a live Rocket.Chat instance. Both skip
 unless the environment is supplied, so neither affects `go test ./...`.
 
 ```sh
-# API-level: login, sync, DDP, history, threads, typing
+# API-level: login, sync, DDP, history, threads, typing, slash command discovery
 cd test/integration
 RC_SERVER=https://chat.example.com RC_USER=me RC_PASS=…   go test -tags livetest -v
 
@@ -422,6 +473,15 @@ cd internal/emoji && go generate
 
 Presence (deliberately out of scope), message deletion, search, admin
 functions, and E2E-encrypted rooms (their messages arrive as ciphertext).
+
+Slash commands run, but two things around them do not. A command that provides
+a preview (`/giphy`) is run outright rather than offering its gallery first, and
+a command that answers with a UIKit modal gets a trigger id and nothing to draw
+the modal it sends back. There is also no local fallback for `/me`: its wire
+form is a message *type* and `chat.sendMessage` exposes no way to set one, so the
+server's own `/me` is dispatched normally and there is simply nothing to fall
+back to. Same for `/mute` and `/unmute`, which are DDP methods with no REST
+route.
 
 Uploads have no progress bar — a large file shows as `syncing` like any other
 request — no per-file description separate from the message text, and no retry:

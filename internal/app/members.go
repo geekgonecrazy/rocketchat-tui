@@ -17,6 +17,12 @@ const (
 )
 
 // emitMembers publishes the mention candidates a room currently has cached.
+//
+// It is published whenever either half of the list can have changed — the
+// fetched roster, and the people who have spoken. Those two arrive over
+// separate requests that race, and only re-emitting on both keeps the completer
+// from settling on whichever landed first: a room whose history arrived after
+// its roster would otherwise offer nobody who had only spoken.
 func (c *Core) emitMembers(roomID string) {
 	members, err := c.store.MentionCandidates(roomID)
 	if err != nil {

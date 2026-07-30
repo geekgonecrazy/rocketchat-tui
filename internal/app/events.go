@@ -85,6 +85,21 @@ type SessionInvalid struct {
 	Reason string
 }
 
+// CommandsUpdated is the slash command registry: what rctui implements merged
+// with what this server advertises. It is published from cache at startup and
+// again when discovery lands, so the composer's completer is never empty while
+// waiting on the network.
+type CommandsUpdated struct {
+	Commands []model.Command
+}
+
+// RoomClosed means a room is no longer ours: it has been left or hidden, and is
+// already gone from the sidebar. The UI needs telling separately because it may
+// still be showing that room's timeline.
+type RoomClosed struct {
+	RoomID string
+}
+
 // Notice is a transient, non-fatal message for the status bar.
 type Notice struct {
 	Text  string
@@ -116,6 +131,8 @@ func (TypingUpdated) isAppEvent()     {}
 func (StatusChanged) isAppEvent()     {}
 func (SessionReady) isAppEvent()      {}
 func (SessionInvalid) isAppEvent()    {}
+func (CommandsUpdated) isAppEvent()   {}
+func (RoomClosed) isAppEvent()        {}
 func (Notice) isAppEvent()            {}
 
 // computeTotals folds the sidebar into header counters.

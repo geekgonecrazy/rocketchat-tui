@@ -423,6 +423,73 @@ extension. Extension first, because `http.DetectContentType` knows nothing about
 most document formats and answers `application/octet-stream` for them — which is
 the answer that gets the upload refused. See `rocket.DetectMIME`.
 
+## 19. A slash command list says what exists, not what a client can run
+
+**Status:** defensive · **Severity:** commands that silently do nothing, or a
+completer that goes stale
+
+`commands.list` is documented as the way to discover slash commands, and it is,
+but three properties of it are not spelled out and each one bites differently.
+
+**It paginates.** The response carries `offset`/`count`/`total` like every other
+list endpoint. A server with a couple of apps installed passes the default page
+size, so a client that reads the first page and stops hides the tail of its own
+command list — and the commands it hides are precisely the ones the user is least
+likely to know exist.
+
+**`clientOnly` is not decoration.** An entry flagged `clientOnly: true` is
+registered so clients know it exists; its implementation lives in the client, and
+`commands.run` will not carry it out. Sending one anyway gets an answer that
+looks like success and does nothing. The web client's `/open` is the clearest
+case: opening a room is not something a server can do to a terminal.
+
+**It can refuse.** Listing commands is permission-gated, and an account without
+that permission gets an error rather than an empty list. A client that treats
+discovery as authoritative then shows *no* commands at all, including the ones it
+implements itself and could run offline.
+
+**What we do:** page to `total` (and stop on a short page, so a wrong or absent
+total cannot spin); treat discovery as additive, keeping the client's own
+commands and the REST fallbacks when the call fails; and never send a
+`clientOnly` command to `commands.run` — where rctui implements one, ours runs;
+where it does not, the command is kept out of the completer and invoking it says
+why. See `rocket.Client.Commands` and `app.mergeCommands`.
+
+**Deliberately dropped**, each because the terminal has nowhere to put the
+result rather than because the API is unclear:
+
+- **Previews.** `commands.preview` offers a gallery to choose from (`/giphy`).
+  We run such a command outright instead, which is what the server does with one
+  that arrives without a choice.
+- **Modals.** A trigger id goes out with every `commands.run` — an app command
+  that wants one fails the whole call without it — but nothing renders the UIKit
+  modal that comes back.
+- **A local `/me`.** Its wire form is a message *type*, and `chat.sendMessage`
+  exposes no way to set one, so a fallback could only fake it with italics. The
+  server's own `/me` is dispatched normally; there is no fallback.
+- **`/mute` and `/unmute`.** DDP methods with no REST route, so the server's
+  version is the only one.
+
+## 20. Room operations exist once per room type, and a DM is not a room you can leave
+
+**Status:** defensive · **Severity:** an error about the room, not about the call
+
+There is no generic room API. Leaving, hiding, kicking, setting a topic and
+archiving each exist three times — `channels.*`, `groups.*`, `im.*` — and calling
+the wrong family for a room reports the room as missing rather than the endpoint
+as wrong, which sends you looking in the wrong place. `rocket.roomPrefix`
+resolves the family once from the room's `t`.
+
+Two of those operations have no `im.*` form at all, because the operation makes
+no sense for a direct message: there is no membership to give up and nobody to
+remove. Both are refused client-side with a reason a user can act on —
+"hide it instead" — rather than being sent and surfacing as a bare 400.
+
+**Also worth knowing:** the delta form of `subscriptions.get` reports removals in
+a separate `remove` array (§ 4 covers the envelope), so leaving a room is not
+something the next sync will tell you about if you only read `update`. The room
+is dropped from the cache when the call succeeds instead.
+
 ---
 
 ## Open questions
@@ -463,6 +530,13 @@ Things not yet settled against a live server:
   strict validator would reject the whole upload for an unknown property. We
   send only `msg`, `tmid` and `tshow`, so a caption distinct from the message
   text is not offered.
+- **Which commands the live target reports as `clientOnly`.** The flag is read
+  and acted on, but the set it covers on 8.4 has not been observed — so which of
+  our fallbacks a real server displaces, and which of its commands land as
+  unsupported, is still unconfirmed.
+- **Whether `commands.run` accepts `tmid`.** The web client sends it from a
+  thread's message box and we do the same, but a strict validator rejecting an
+  unknown property would fail the whole call, and that has not been tried.
 - **Where the server puts `ls` when marking unread**, exactly. We anchor to the
   message before the first unread one, which places the divider correctly; if
   the server instead stores the unread message's own timestamp, the subscription

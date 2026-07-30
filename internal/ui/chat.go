@@ -113,6 +113,11 @@ type chatModel struct {
 
 	// mentions is the composer's inline "@" completer, fed by members.
 	mentions mentionPicker
+	// cmdPicker is the composer's inline "/" completer, fed by commands.
+	cmdPicker commandPicker
+	// commands is the slash command registry the core publishes: what rctui
+	// implements merged with what this server advertises.
+	commands []model.Command
 	// members are the mention candidates for the open room, best first.
 	members []model.Member
 
@@ -140,7 +145,10 @@ func newChatModel(core *app.Core, theme render.Theme, username, serverLabel, dow
 	composer.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
 
 	return chatModel{
-		core:           core,
+		core: core,
+		// The client's own commands are known without asking anyone; the core
+		// replaces this with the full registry as soon as it has one.
+		commands:       app.ClientCommands(),
 		theme:          theme,
 		username:       username,
 		serverLabel:    serverLabel,
@@ -193,6 +201,9 @@ func (m chatModel) composerHeight() int {
 func (m chatModel) pickerHeight() int {
 	if m.attach.open {
 		return len(m.attachSuggestions())
+	}
+	if m.cmdPicker.active() {
+		return min(commandRows, max(1, len(m.cmdPicker.matches)))
 	}
 	if m.mentions.active() {
 		return min(mentionRows, max(1, len(m.mentions.matches)))
@@ -318,6 +329,30 @@ func (m chatModel) handleCoreEvent(event app.Event) (chatModel, tea.Cmd) {
 			}
 		}
 
+	case app.CommandsUpdated:
+		m.commands = e.Commands
+		// Discovery landing while the list is open should widen it under the
+		// cursor rather than wait for the next keystroke.
+		if m.cmdPicker.active() {
+			m.cmdPicker.refresh(m.commands)
+			m.rebuildBody()
+		}
+
+	case app.RoomClosed:
+		if e.RoomID != m.activeRoom {
+			return m, nil
+		}
+		// The room the user was reading is not theirs any more. Move to whatever
+		// the sidebar now holds rather than leaving its timeline on screen.
+		m.activeRoom = ""
+		m.messages = nil
+		m.room = model.Room{}
+		if len(m.visible) > 0 {
+			cmd := m.openRoom(m.visible[0].ID)
+			return m, cmd
+		}
+		m.rebuildBody()
+
 	case app.MembersUpdated:
 		if e.RoomID != m.activeRoom {
 			return m, nil
@@ -394,6 +429,13 @@ func (m chatModel) View() string {
 	var picker []string
 	if m.attach.open {
 		picker = m.attachSuggestions()
+	} else if m.cmdPicker.active() {
+		picker = render.CommandPicker(m.theme, render.CommandPickerState{
+			Matches: m.cmdPicker.matches,
+			Cursor:  m.cmdPicker.cursor,
+			Width:   m.width,
+			MaxRows: commandRows,
+		})
 	} else if m.mentions.active() {
 		picker = render.MentionPicker(m.theme, render.MentionPickerState{
 			Query:   m.mentions.query,
@@ -511,8 +553,10 @@ func (m chatModel) statusBar() string {
 		// What to do about the queue displaces the general hints: it is the one
 		// thing on screen the user has no other way of learning how to undo.
 		hints = "enter send with files · ctrl+o attach another · ctrl+x remove last"
+	case m.cmdPicker.active():
+		hints = "tab complete · enter run · esc dismiss"
 	case m.focus == focusComposer:
-		hints = "enter send · ctrl+o attach · ↑ edit last · @mention · ctrl+t threads · ? help"
+		hints = "enter send · / command · ctrl+o attach · ↑ edit last · @mention · ? help"
 	case m.focus == focusRooms:
 		hints = "enter open · / filter · ctrl+t threads · ? help"
 	}

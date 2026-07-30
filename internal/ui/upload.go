@@ -55,10 +55,11 @@ func (m chatModel) beginAttach(initial string) (chatModel, tea.Cmd) {
 	m.composer.SetValue(initial)
 	m.composer.SetHeight(1)
 	m.composer.CursorEnd()
-	// A path is not a message, so neither completer applies to what is being
+	// A path is not a message, so none of the completers apply to what is being
 	// typed now; leaving one open would have it match against the path.
 	m.picker.close()
 	m.mentions.close()
+	m.cmdPicker.close()
 	m.rebuildBody()
 	return m, textarea.Blink
 }
@@ -143,30 +144,10 @@ func (m chatModel) dropLastUpload() (chatModel, tea.Cmd) {
 	return m.notify("removed "+dropped.Name, false)
 }
 
-// uploadCommand recognises "/upload" typed into the composer and returns the
-// path after it, which is empty when the command was given bare.
-//
-// Only a single line qualifies. A multi-line message that happens to start with
-// the word is a message, not a command.
-func uploadCommand(value string) (path string, ok bool) {
-	trimmed := strings.TrimSpace(value)
-	if strings.ContainsRune(trimmed, '\n') {
-		return "", false
-	}
-	rest, found := strings.CutPrefix(trimmed, "/upload")
-	if !found {
-		return "", false
-	}
-	// "/uploads/foo" is not the command; a space or nothing must follow it.
-	if rest != "" && !strings.HasPrefix(rest, " ") {
-		return "", false
-	}
-	// The path is taken verbatim rather than split on spaces, so a name with
-	// spaces in it needs no quoting.
-	return strings.TrimSpace(rest), true
-}
-
 // attachFromCommand handles "/upload <path>" without opening the prompt.
+//
+// The path is whatever followed the command, taken verbatim rather than split on
+// spaces, so a name with spaces in it needs no quoting.
 func (m chatModel) attachFromCommand(path string) (chatModel, tea.Cmd) {
 	if path == "" {
 		// Bare "/upload" means the user wants the picker, not an error.

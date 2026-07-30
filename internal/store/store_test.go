@@ -953,3 +953,50 @@ func TestSaveRoomMembersReplacesTheRoster(t *testing.T) {
 		t.Errorf("candidates = %+v, want stays and joined", members)
 	}
 }
+
+// The command list is a snapshot of what the server offers now, so saving it
+// replaces the cached one: a command that left with the app that provided it
+// should stop being offered here too.
+func TestSaveCommandsReplacesTheCachedList(t *testing.T) {
+	s := openStore(t)
+	if err := s.SaveCommands([]rocket.Command{
+		{Command: "gone", Description: "from an app since removed"},
+		{Command: "archive", Params: "", Description: "Archive", ClientOnly: false},
+	}); err != nil {
+		t.Fatalf("first SaveCommands: %v", err)
+	}
+	if err := s.SaveCommands([]rocket.Command{
+		{Command: "archive", Description: "Archive"},
+		{Command: "open", Params: "#channel", Description: "Open a room", ClientOnly: true},
+	}); err != nil {
+		t.Fatalf("second SaveCommands: %v", err)
+	}
+
+	commands, err := s.Commands()
+	if err != nil {
+		t.Fatalf("Commands: %v", err)
+	}
+	if len(commands) != 2 {
+		t.Fatalf("got %d commands %+v, want 2", len(commands), commands)
+	}
+	// Alphabetical, and the flags survive the round trip: clientOnly is what
+	// says commands.run cannot execute it, so losing it would be silent.
+	if commands[0].Command != "archive" || commands[1].Command != "open" {
+		t.Errorf("commands = %+v, want archive then open", commands)
+	}
+	if !commands[1].ClientOnly || commands[1].Params != "#channel" {
+		t.Errorf("open = %+v, want its params and clientOnly flag kept", commands[1])
+	}
+}
+
+// A cold cache is not an error: the completer falls back to what the client
+// implements itself until discovery lands.
+func TestCommandsOnAColdCacheIsEmpty(t *testing.T) {
+	commands, err := openStore(t).Commands()
+	if err != nil {
+		t.Fatalf("Commands: %v", err)
+	}
+	if len(commands) != 0 {
+		t.Errorf("got %+v, want nothing", commands)
+	}
+}

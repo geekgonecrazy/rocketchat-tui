@@ -154,6 +154,7 @@ func (c *Core) catchUpRoom(roomID string) {
 				c.hasMore[roomID] = !reachedStart
 				if c.currentRoom == roomID {
 					c.emitTimeline(roomID)
+					c.emitMembers(roomID)
 				}
 			})
 			return nil
@@ -178,6 +179,7 @@ func (c *Core) catchUpRoom(roomID string) {
 		c.enqueue(func(c *Core) {
 			if c.currentRoom == roomID {
 				c.emitTimeline(roomID)
+				c.emitMembers(roomID)
 			}
 			c.refreshRooms()
 		})
@@ -570,22 +572,30 @@ func (c *Core) Send(roomID, threadID, text string, uploads ...Upload) {
 			if len(uploads) > 0 {
 				return c.sendUploads(ctx, roomID, threadID, text, uploads)
 			}
-
-			sent, err := c.client.Send(ctx, rocket.SendOptions{
-				RoomID:   roomID,
-				Text:     text,
-				ThreadID: threadID,
-			})
-			if err != nil {
-				return err
-			}
-			if err := c.store.SaveMessages([]rocket.Message{sent}); err != nil {
+			if err := c.sendText(ctx, roomID, threadID, text); err != nil {
 				return err
 			}
 			c.enqueue(func(c *Core) { c.refreshAfterSend(roomID, threadID) })
 			return nil
 		})
 	})
+}
+
+// sendText posts one message and caches the server's copy of it. It is the plain
+// send path, shared with the slash commands that post on the user's behalf.
+//
+// It runs off the loop, like every other network call, and leaves publishing to
+// its caller: what needs re-rendering depends on why the message was sent.
+func (c *Core) sendText(ctx context.Context, roomID, threadID, text string) error {
+	sent, err := c.client.Send(ctx, rocket.SendOptions{
+		RoomID:   roomID,
+		Text:     text,
+		ThreadID: threadID,
+	})
+	if err != nil {
+		return err
+	}
+	return c.store.SaveMessages([]rocket.Message{sent})
 }
 
 // refreshAfterSend re-publishes whichever panes the new message belongs in.

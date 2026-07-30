@@ -559,3 +559,84 @@ func TestEndToEndEditsTheLastMessageWithUpArrow(t *testing.T) {
 	r.waitForOutput("(edited)")
 	r.quit()
 }
+
+// The whole path a slash command takes: discovered on login, offered in the
+// composer, dispatched to the server, and answered in the room it was typed in.
+func TestEndToEndRunsADiscoveredSlashCommand(t *testing.T) {
+	server := fakerc.New(t)
+	lastSeen := time.Now().Add(-time.Hour)
+	server.AddRoom("room-1", "c", "general", nil)
+	server.AddSubscription("room-1", "c", "general", 0, 0, lastSeen, nil)
+	server.AddMessage("m1", "room-1", "alice", "morning", lastSeen, nil)
+	// A command this deployment has and rctui does not, so only discovery can
+	// put it in front of the user.
+	server.AddCommand("gimme", "<message>", "Sends a message with emphasis", false)
+
+	r := newRunner(t, server, t.TempDir(), true)
+	r.waitForOutput("Rocket.Chat")
+	r.send(tea.KeyMsg{Type: tea.KeyCtrlT})
+	r.sendRunes(fakerc.AuthToken)
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+	r.waitForOutput("morning")
+
+	// "/" opens the list, and what the server told us about is in it.
+	r.sendRunes("/gim")
+	r.waitForOutput("Sends a message with emphasis")
+
+	// tab completes it, then the argument and enter run it.
+	r.send(tea.KeyMsg{Type: tea.KeyTab})
+	r.sendRunes("a raise")
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	waitUntil(t, "the command to reach the server", func() bool {
+		for _, ran := range server.RanCommands() {
+			if ran.Command == "gimme" && ran.Params == "a raise" && ran.RoomID == "room-1" {
+				return true
+			}
+		}
+		return false
+	})
+	// A command is not a message, whatever else it does.
+	if sent := server.SentMessages(); len(sent) != 0 {
+		t.Errorf("the command was posted as a message too: %+v", sent)
+	}
+	r.quit()
+}
+
+// A command rctui carries itself works against a server that has never heard of
+// it, and the room goes with it.
+func TestEndToEndLeaveDropsTheRoomFromTheSidebar(t *testing.T) {
+	server := fakerc.New(t)
+	lastSeen := time.Now().Add(-time.Hour)
+	// general is the busier room, so it is the one the app lands in.
+	server.AddRoom("room-1", "c", "general", map[string]any{
+		"lm": lastSeen.UTC().Format(time.RFC3339Nano)})
+	server.AddSubscription("room-1", "c", "general", 0, 0, lastSeen, nil)
+	server.AddRoom("room-2", "c", "elsewhere", map[string]any{
+		"lm": lastSeen.Add(-time.Hour).UTC().Format(time.RFC3339Nano)})
+	server.AddSubscription("room-2", "c", "elsewhere", 0, 0, lastSeen, nil)
+	server.AddMessage("m1", "room-1", "alice", "morning", lastSeen, nil)
+	server.AddMessage("m2", "room-2", "bob", "over here", lastSeen.Add(-time.Hour), nil)
+
+	r := newRunner(t, server, t.TempDir(), true)
+	r.waitForOutput("Rocket.Chat")
+	r.send(tea.KeyMsg{Type: tea.KeyCtrlT})
+	r.sendRunes(fakerc.AuthToken)
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+	r.waitForOutput("morning")
+
+	r.sendRunes("/leave ")
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	waitUntil(t, "the leave call", func() bool {
+		for _, action := range server.RoomActions() {
+			if action.Endpoint == "channels.leave" && action.RoomID == "room-1" {
+				return true
+			}
+		}
+		return false
+	})
+	// The room the user just left must not still be the one on screen.
+	r.waitForOutput("over here")
+	r.quit()
+}

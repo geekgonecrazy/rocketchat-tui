@@ -1123,6 +1123,70 @@ func TestLiveUpload(t *testing.T) {
 	}
 }
 
+// TestLiveSlashCommands is the read-only half of § 19: what a real server
+// actually reports, since the shape of commands.list is only documented in
+// outline. It answers three questions the fake cannot: how many commands a real
+// deployment carries (and therefore whether paging matters), which of them are
+// flagged clientOnly, and which of rctui's own fallbacks the server would
+// displace.
+func TestLiveSlashCommands(t *testing.T) {
+	client, _ := liveClient(t)
+	ctx := context.Background()
+
+	commands, err := client.Commands(ctx)
+	if err != nil {
+		// Listing commands is permission-gated, so a refusal is a finding, not a
+		// failure: rctui keeps its own commands working either way.
+		t.Skipf("commands.list refused (%v) — discovery is additive, so this is survivable", err)
+	}
+	t.Logf("%d slash commands advertised", len(commands))
+	if len(commands) > 100 {
+		t.Logf("NOTE: more than one page — paging is load-bearing here, not theoretical")
+	}
+
+	var clientOnly, previews []string
+	advertised := map[string]bool{}
+	for _, command := range commands {
+		advertised[command.Command] = true
+		if command.ClientOnly {
+			clientOnly = append(clientOnly, command.Command)
+		}
+		if command.ProvidesPreview {
+			previews = append(previews, command.Command)
+		}
+	}
+	sort.Strings(clientOnly)
+	sort.Strings(previews)
+	t.Logf("clientOnly (commands.run cannot execute these): %v", clientOnly)
+	t.Logf("providesPreview (we run these without their gallery, § 19): %v", previews)
+
+	// Everything rctui carries a REST fallback for. Where the server advertises
+	// one, its version wins; where it does not, ours is the only one there is.
+	fallbacks := []string{
+		"leave", "part", "hide", "join", "invite", "kick", "topic",
+		"archive", "unarchive", "create", "msg",
+	}
+	var displaced, ours []string
+	for _, name := range fallbacks {
+		if advertised[name] {
+			displaced = append(displaced, name)
+			continue
+		}
+		ours = append(ours, name)
+	}
+	t.Logf("server's version wins for: %v", displaced)
+	t.Logf("our REST fallback is the only one for: %v", ours)
+
+	for _, name := range clientOnly {
+		switch name {
+		case "open", "hide", "upload", "help", "exit", "quit":
+		default:
+			t.Logf("NOTE: /%s is clientOnly and rctui does not implement it — "+
+				"it is kept out of the completer and invoking it says so", name)
+		}
+	}
+}
+
 // testPNG is a small but genuine PNG, so the server decodes something real.
 func testPNG() []byte {
 	img := image.NewRGBA(image.Rect(0, 0, 16, 16))

@@ -142,18 +142,11 @@ func (c *Client) CreateDirectMessage(ctx context.Context, usernames ...string) (
 
 // membersEndpoint maps a room type onto its type-specific members endpoint.
 func membersEndpoint(roomType string) (string, error) {
-	switch roomType {
-	case RoomTypeChannel, RoomTypeLive:
-		return "channels.members", nil
-	case RoomTypePrivate:
-		return "groups.members", nil
-	case RoomTypeDirect:
-		return "im.members", nil
-	case "":
-		return "", fmt.Errorf("rocket: room type is required to list members")
-	default:
-		return "", fmt.Errorf("rocket: unsupported room type %q", roomType)
+	prefix, err := roomPrefix(roomType)
+	if err != nil {
+		return "", fmt.Errorf("%w (listing members)", err)
 	}
+	return prefix + ".members", nil
 }
 
 // RoomMembers lists the users in a room, newest joiners last.
@@ -180,6 +173,139 @@ func (c *Client) RoomMembers(ctx context.Context, roomID, roomType string, count
 		return nil, err
 	}
 	return resp.Members, nil
+}
+
+// roomPrefix maps a room type onto the family of endpoints that operate on it.
+// Rocket.Chat has no generic room API: every operation exists three times, once
+// per type, and picking the wrong one is an error about the room not existing
+// rather than about the endpoint.
+func roomPrefix(roomType string) (string, error) {
+	switch roomType {
+	case RoomTypeChannel, RoomTypeLive:
+		return "channels", nil
+	case RoomTypePrivate:
+		return "groups", nil
+	case RoomTypeDirect:
+		return "im", nil
+	case "":
+		return "", fmt.Errorf("rocket: room type is required")
+	default:
+		return "", fmt.Errorf("rocket: unsupported room type %q", roomType)
+	}
+}
+
+// LeaveRoom removes the logged-in user from a channel or private group.
+//
+// A direct message has no membership to give up — the DM exists as long as both
+// people are on the server — so it is refused here with something a user can act
+// on instead of the server's complaint about an unknown endpoint.
+func (c *Client) LeaveRoom(ctx context.Context, roomID, roomType string) error {
+	if roomType == RoomTypeDirect {
+		return fmt.Errorf("rocket: a direct message cannot be left; hide it instead")
+	}
+	prefix, err := roomPrefix(roomType)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, request{
+		method:   "POST",
+		endpoint: prefix + ".leave",
+		body:     map[string]any{"roomId": roomID},
+	}, nil)
+}
+
+// HideRoom closes a room for this user: it leaves the sidebar without anyone
+// leaving the room, and reopens the moment there is something new in it.
+func (c *Client) HideRoom(ctx context.Context, roomID, roomType string) error {
+	prefix, err := roomPrefix(roomType)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, request{
+		method:   "POST",
+		endpoint: prefix + ".close",
+		body:     map[string]any{"roomId": roomID},
+	}, nil)
+}
+
+// JoinRoom adds the logged-in user to a public channel. joinCode is the code a
+// channel may be protected with, and is omitted when empty.
+func (c *Client) JoinRoom(ctx context.Context, roomID, joinCode string) error {
+	body := map[string]any{"roomId": roomID}
+	if joinCode != "" {
+		body["joinCode"] = joinCode
+	}
+	return c.do(ctx, request{method: "POST", endpoint: "channels.join", body: body}, nil)
+}
+
+// ChannelByName looks a public channel up by its slug, which is what a user
+// types: joining takes a room id, and a channel you have not joined is not in
+// the local cache to resolve one from.
+func (c *Client) ChannelByName(ctx context.Context, name string) (Room, error) {
+	name = strings.TrimPrefix(strings.TrimSpace(name), "#")
+	if name == "" {
+		return Room{}, fmt.Errorf("rocket: channel name is required")
+	}
+	var resp struct {
+		Channel Room `json:"channel"`
+	}
+	if err := c.do(ctx, request{
+		method:   "GET",
+		endpoint: "channels.info",
+		query:    url.Values{"roomName": {name}},
+	}, &resp); err != nil {
+		return Room{}, err
+	}
+	return resp.Channel, nil
+}
+
+// RemoveFromRoom removes another user from a channel or private group.
+func (c *Client) RemoveFromRoom(ctx context.Context, roomID, roomType, userID string) error {
+	if roomType == RoomTypeDirect {
+		return fmt.Errorf("rocket: nobody can be removed from a direct message")
+	}
+	prefix, err := roomPrefix(roomType)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, request{
+		method:   "POST",
+		endpoint: prefix + ".kick",
+		body:     map[string]any{"roomId": roomID, "userId": userID},
+	}, nil)
+}
+
+// SetTopic replaces a room's topic.
+func (c *Client) SetTopic(ctx context.Context, roomID, roomType, topic string) error {
+	prefix, err := roomPrefix(roomType)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, request{
+		method:   "POST",
+		endpoint: prefix + ".setTopic",
+		body:     map[string]any{"roomId": roomID, "topic": topic},
+	}, nil)
+}
+
+// SetArchived archives or unarchives a channel or private group.
+func (c *Client) SetArchived(ctx context.Context, roomID, roomType string, archived bool) error {
+	if roomType == RoomTypeDirect {
+		return fmt.Errorf("rocket: a direct message cannot be archived")
+	}
+	prefix, err := roomPrefix(roomType)
+	if err != nil {
+		return err
+	}
+	action := ".unarchive"
+	if archived {
+		action = ".archive"
+	}
+	return c.do(ctx, request{
+		method:   "POST",
+		endpoint: prefix + action,
+		body:     map[string]any{"roomId": roomID},
+	}, nil)
 }
 
 // Discussions lists discussions whose parent is roomID.

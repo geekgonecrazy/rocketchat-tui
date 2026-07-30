@@ -673,3 +673,65 @@ func TestPathMatchesIsEmptyWithNothingToSuggest(t *testing.T) {
 		t.Errorf("want no rows for no matches, got %v", lines)
 	}
 }
+
+func TestCommandPickerAlignsDescriptionsAndScrollsToTheCursor(t *testing.T) {
+	commands := []model.Command{
+		{Name: "archive", Description: "Archive the room"},
+		{Name: "invite", Params: "@username…", Description: "add people to this room"},
+		{Name: "leave", Description: "leave this room"},
+		{Name: "topic", Params: "<text>", Description: "set this room's topic"},
+	}
+
+	lines := CommandPicker(plainTheme(), CommandPickerState{
+		Matches: commands, Cursor: 0, Width: 60, MaxRows: 2,
+	})
+	if len(lines) != 2 {
+		t.Fatalf("got %d rows, want 2", len(lines))
+	}
+	for i, line := range lines {
+		if Width(line) != 60 {
+			t.Errorf("row %d is %d cells wide, want the full 60", i, Width(line))
+		}
+	}
+	// Usages share a column, so the descriptions read as prose rather than a
+	// ragged edge.
+	// Measured in cells, not bytes: "…" is one column and three bytes, and it
+	// is exactly the kind of character a params hint contains.
+	first := Width(lines[0][:strings.Index(lines[0], "Archive the room")])
+	second := Width(lines[1][:strings.Index(lines[1], "add people")])
+	if first != second {
+		t.Errorf("descriptions start at column %d and %d, want one column", first, second)
+	}
+
+	// The list scrolls to keep the cursor visible rather than clipping it off
+	// the bottom.
+	lines = CommandPicker(plainTheme(), CommandPickerState{
+		Matches: commands, Cursor: 3, Width: 60, MaxRows: 2,
+	})
+	if !strings.Contains(strings.Join(lines, "\n"), "/topic") {
+		t.Errorf("the highlighted command is off screen:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+func TestCommandPickerIsEmptyWithNothingToOffer(t *testing.T) {
+	if lines := CommandPicker(plainTheme(), CommandPickerState{Width: 40, MaxRows: 4}); lines != nil {
+		t.Errorf("want no rows for no matches, got %v", lines)
+	}
+}
+
+// A usage longer than half the width must not push every description off the
+// right-hand edge.
+func TestCommandPickerBoundsTheUsageColumn(t *testing.T) {
+	lines := CommandPicker(plainTheme(), CommandPickerState{
+		Matches: []model.Command{
+			{Name: "msg", Params: "@username <a very long message indeed>", Description: "send a direct message"},
+		},
+		Width: 40, MaxRows: 4,
+	})
+	if len(lines) != 1 {
+		t.Fatalf("got %d rows, want 1", len(lines))
+	}
+	if Width(lines[0]) != 40 {
+		t.Errorf("row is %d cells wide, want 40", Width(lines[0]))
+	}
+}

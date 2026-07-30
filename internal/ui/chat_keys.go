@@ -27,6 +27,36 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		return m.handleAttachKey(msg)
 	}
 
+	// The command completer claims its navigation keys the way the other two do.
+	// It comes first because a line being completed here is nothing but a
+	// command name, so no other completer can be open over the same text.
+	if m.cmdPicker.active() {
+		switch pressed {
+		case "up", "ctrl+p":
+			m.cmdPicker.move(-1)
+			return m, nil
+		case "down", "ctrl+n":
+			m.cmdPicker.move(1)
+			return m, nil
+		case "tab":
+			return m.acceptCommand()
+		case "enter":
+			// A command typed out in full is a command, not a prefix waiting to
+			// be completed, so enter runs it and the list gets out of the way.
+			// Anything else — a prefix, or a candidate arrowed to — completes,
+			// which is what enter does in the other two completers.
+			if !m.cmdPicker.typedInFull() {
+				return m.acceptCommand()
+			}
+			m.cmdPicker.close()
+			m.rebuildBody()
+		case "esc":
+			m.cmdPicker.close()
+			m.rebuildBody()
+			return m, nil
+		}
+	}
+
 	// The mention completer claims its navigation keys before the global
 	// bindings do, for the same reason the emoji one does below.
 	if m.mentions.active() {
@@ -290,13 +320,21 @@ func (m chatModel) handleComposerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 	m.composer.SetHeight(clamp(strings.Count(after, "\n")+1, 1, 4))
 
 	// The completers follow the text rather than being summoned by a key, so they
-	// have to be recomputed on every edit.
+	// have to be recomputed on every edit. Only one can be open: a line that is
+	// still a bare command name cannot also hold a mention or a shortcode.
 	if after != before {
-		m.mentions.sync(after, m.mentionCandidates)
-		if m.mentions.active() {
+		m.cmdPicker.sync(after, m.commands)
+		switch {
+		case m.cmdPicker.active():
+			m.mentions.close()
 			m.picker.close()
-		} else {
-			m.picker.syncCompletion(after)
+		default:
+			m.mentions.sync(after, m.mentionCandidates)
+			if m.mentions.active() {
+				m.picker.close()
+			} else {
+				m.picker.syncCompletion(after)
+			}
 		}
 		m.rebuildBody() // the list changes how much room the body has
 	}
@@ -363,14 +401,17 @@ func (m *chatModel) openRoom(roomID string) tea.Cmd {
 }
 
 func (m chatModel) send() (chatModel, tea.Cmd) {
-	if m.activeRoom == "" || m.room.ReadOnly {
-		return m, nil
+	// A slash command is not a message, so it is dispatched before anything the
+	// composer would otherwise do with the line — including the read-only check,
+	// since /leave and /exit are exactly what a read-only room needs to offer.
+	// It is caught here rather than at keystroke time so the whole line is in
+	// hand: "/topic release week" is one command, not a word and a message.
+	if name, params, ok := model.ParseCommand(m.composer.Value()); ok {
+		return m.runComposedCommand(name, params)
 	}
 
-	// "/upload …" is a way of attaching a file, not a message to post. It is
-	// caught here rather than at keystroke time so the whole line is in hand.
-	if path, ok := uploadCommand(m.composer.Value()); ok {
-		return m.attachFromCommand(path)
+	if m.activeRoom == "" || m.room.ReadOnly {
+		return m, nil
 	}
 
 	text := strings.TrimSpace(m.composer.Value())

@@ -70,6 +70,7 @@ func (s *Store) Reset() error {
 		DELETE FROM subscriptions;
 		DELETE FROM rooms;
 		DELETE FROM room_history;
+		DELETE FROM commands;
 		DELETE FROM meta;
 	`)
 	if err != nil {

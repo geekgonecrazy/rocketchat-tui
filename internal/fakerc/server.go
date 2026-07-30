@@ -99,6 +99,12 @@ type Server struct {
 	// RejectUpload makes both upload routes fail, standing in for a rejected
 	// media type or an oversized file.
 	RejectUpload bool
+	// RejectCommandList makes commands.list fail the way a server that does not
+	// serve it, or an account without the permission for it, does.
+	RejectCommandList bool
+	// NoSuchUsers are usernames users.info refuses, so that a command working
+	// through a list of people can be caught partway.
+	NoSuchUsers []string
 
 	mu            sync.Mutex
 	rooms         []map[string]any
@@ -114,6 +120,9 @@ type Server struct {
 	readRooms     []string
 	unreadMarks   []UnreadMark
 	uploads       []Upload
+	commands      []map[string]any
+	ranCommands   []RanCommand
+	roomActions   []RoomAction
 	pendingMedia  map[string]Upload
 	fileRequests  int
 	nextID        int
@@ -152,6 +161,13 @@ func New(t *testing.T) *Server {
 	mux.HandleFunc("/api/v1/rooms.media/", s.authed(s.handleRoomsMedia))
 	mux.HandleFunc("/api/v1/rooms.mediaConfirm/", s.authed(s.handleRoomsMediaConfirm))
 	mux.HandleFunc("/api/v1/rooms.upload/", s.authed(s.handleRoomsUpload))
+	mux.HandleFunc("/api/v1/commands.list", s.authed(s.handleCommandsList))
+	mux.HandleFunc("/api/v1/commands.run", s.authed(s.handleCommandsRun))
+	mux.HandleFunc("/api/v1/users.info", s.authed(s.handleUserInfo))
+	mux.HandleFunc("/api/v1/channels.info", s.authed(s.handleChannelInfo))
+	for _, endpoint := range roomActionEndpoints {
+		mux.HandleFunc("/api/v1/"+endpoint, s.authed(s.handleRoomAction))
+	}
 	mux.HandleFunc("/file-upload/", s.authed(s.handleFileUpload))
 	mux.HandleFunc("/websocket", s.handleWebSocket)
 
