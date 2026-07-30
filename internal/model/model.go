@@ -94,6 +94,20 @@ func (r Room) Label() string {
 	return r.Kind.Sigil() + " " + name
 }
 
+// Mention converts a room into a "#" completion candidate.
+//
+// The inserted text is the slug rather than the display name, because that is
+// what the server resolves into a link — the two often differ, which is the
+// main reason completing a channel is worth doing at all. Rooms without a slug
+// cannot be mentioned: DMs are addressed by person, and an omnichannel room is
+// a conversation with a visitor rather than a place anyone can be pointed at.
+func (r Room) Mention() (Mention, bool) {
+	if r.Name == "" || r.Kind == KindDirect || r.Kind == KindOmnichannel {
+		return Mention{}, false
+	}
+	return Mention{Sigil: "#", Value: r.Name, Name: r.DisplayName}, true
+}
+
 // Mentions is the count that drives the red badge.
 func (r Room) Mentions() int { return r.UserMentions + r.GroupMentions }
 
@@ -212,13 +226,30 @@ type Member struct {
 	Name     string // display name, may be empty
 }
 
-// Label renders a member for a candidate list: the username first, since that
-// is what gets typed and inserted, with the real name as context.
-func (m Member) Label() string {
-	if m.Name == "" || strings.EqualFold(m.Name, m.Username) {
-		return "@" + m.Username
+// Mention converts a member into a completion candidate.
+func (m Member) Mention() Mention {
+	return Mention{Sigil: "@", Value: m.Username, Name: m.Name}
+}
+
+// Mention is a candidate for one of the composer's inline completers: a person
+// for "@", a room for "#".
+//
+// The two are one type because the completer treats them identically — Value is
+// what gets spliced in after the sigil, Name is only context. What differs is
+// where the candidates come from, which is the caller's business.
+type Mention struct {
+	Sigil string
+	Value string
+	Name  string // display name, may be empty
+}
+
+// Label renders a candidate for the list: the mention as it will be inserted
+// first, since that is what gets typed, with the display name as context.
+func (m Mention) Label() string {
+	if m.Name == "" || strings.EqualFold(m.Name, m.Value) {
+		return m.Sigil + m.Value
 	}
-	return "@" + m.Username + "  " + m.Name
+	return m.Sigil + m.Value + "  " + m.Name
 }
 
 // TypingUsers is a room's current typists, excluding the local user.

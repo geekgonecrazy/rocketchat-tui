@@ -246,7 +246,7 @@ func (m chatModel) handleComposerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 	// The completers follow the text rather than being summoned by a key, so they
 	// have to be recomputed on every edit.
 	if after != before {
-		m.mentions.sync(after, m.members)
+		m.mentions.sync(after, m.mentionCandidates)
 		if m.mentions.active() {
 			m.picker.close()
 		} else {

@@ -211,6 +211,10 @@ func HelpOverlay(theme Theme, width int) []string {
 			"typing to narrow them. tab or enter inserts the username, esc", max(1, width-4))),
 		"  "+theme.Muted.Render(Truncate(
 			"dismisses. @all and @here notify the room.", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"Type # instead and the rooms you are in appear, so you can link one", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"without remembering its slug.", max(1, width-4))),
 		"",
 		theme.Title.Render("  Emoji"),
 		"  "+theme.Muted.Render(Truncate(

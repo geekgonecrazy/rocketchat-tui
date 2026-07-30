@@ -54,12 +54,14 @@ func event(m chatModel, e app.Event) chatModel {
 
 func sampleRooms() []model.Room {
 	now := time.Now()
+	// Slugs and display names differ the way they do on a real server: a
+	// subscription carries both, and a DM's name is the other person.
 	return []model.Room{
-		{ID: "r1", DisplayName: "general", Kind: model.KindChannel, Unread: 3, Alert: true,
+		{ID: "r1", Name: "general", DisplayName: "general", Kind: model.KindChannel, Unread: 3, Alert: true,
 			LastMessageAt: now},
-		{ID: "r2", DisplayName: "alice", Kind: model.KindDirect, UserMentions: 1,
+		{ID: "r2", Name: "alice", DisplayName: "alice", Kind: model.KindDirect, UserMentions: 1,
 			LastMessageAt: now.Add(-time.Minute)},
-		{ID: "r3", DisplayName: "random", Kind: model.KindChannel,
+		{ID: "r3", Name: "random", DisplayName: "random", Kind: model.KindChannel,
 			LastMessageAt: now.Add(-time.Hour)},
 	}
 }

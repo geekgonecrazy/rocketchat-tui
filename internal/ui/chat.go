@@ -223,6 +223,12 @@ func (m chatModel) handleCoreEvent(event app.Event) (chatModel, tea.Cmd) {
 		m.rooms = e.Rooms
 		m.totals = e.Totals
 		m.applyFilter()
+		// A resync while "#" is open should update the list under the cursor
+		// rather than leave it showing rooms that have since gone.
+		if m.mentions.active() {
+			m.mentions.refresh(m.mentionCandidates)
+			m.rebuildBody()
+		}
 		// Open the first room automatically on a cold start so the user lands in
 		// something useful instead of an empty pane.
 		if m.activeRoom == "" && len(m.visible) > 0 {
@@ -279,7 +285,7 @@ func (m chatModel) handleCoreEvent(event app.Event) (chatModel, tea.Cmd) {
 		// A roster arriving while the completer is open should widen the list
 		// under the cursor, not wait for the next keystroke.
 		if m.mentions.active() {
-			m.mentions.refresh(m.members)
+			m.mentions.refresh(m.mentionCandidates)
 			m.rebuildBody()
 		}
 
@@ -440,7 +446,7 @@ func (m chatModel) statusBar() string {
 	hints := "enter thread · r react · ctrl+t threads · ? help"
 	switch m.focus {
 	case focusComposer:
-		hints = "enter send · @mention · :emoji · ctrl+t threads · ? help"
+		hints = "enter send · @mention · #channel · :emoji · ctrl+t threads · ? help"
 	case focusRooms:
 		hints = "enter open · / filter · ctrl+t threads · ? help"
 	}

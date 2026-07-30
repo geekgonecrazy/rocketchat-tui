@@ -78,12 +78,12 @@ func EmojiPicker(theme Theme, state EmojiPickerState) []string {
 	return lines
 }
 
-// MentionPickerState is the input for the composer's "@" completer.
+// MentionPickerState is the input for the composer's "@" and "#" completers.
 type MentionPickerState struct {
-	// Query is what the user has typed after the "@".
+	// Query is what the user has typed after the sigil.
 	Query string
 	// Matches are the candidates, best first.
-	Matches []model.Member
+	Matches []model.Mention
 	// Cursor is the highlighted index.
 	Cursor int
 	Width  int
@@ -92,7 +92,8 @@ type MentionPickerState struct {
 }
 
 // MentionPicker renders the candidate list as a compact box, floating just
-// above the composer the way the emoji completer does.
+// above the composer the way the emoji completer does. Each candidate carries
+// its own sigil, so people and rooms render through the same list.
 func MentionPicker(theme Theme, state MentionPickerState) []string {
 	if state.Width <= 0 || state.MaxRows <= 0 || len(state.Matches) == 0 {
 		return nil

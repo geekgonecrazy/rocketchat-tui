@@ -281,6 +281,52 @@ func TestEndToEndSwitchRoomsLoadsHistory(t *testing.T) {
 	r.quit()
 }
 
+// The point of completing a channel is that its mentionable slug and the name
+// on screen are not the same string, so the end-to-end path has to carry both.
+func TestEndToEndCompletesChannelMention(t *testing.T) {
+	server := fakerc.New(t)
+	lastSeen := time.Now().Add(-time.Hour)
+	// room-1 has the most recent message, so it is the one that opens.
+	server.AddRoom("room-1", "c", "general", map[string]any{
+		"lm": lastSeen.UTC().Format(time.RFC3339Nano),
+	})
+	server.AddSubscription("room-1", "c", "general", 0, 0, lastSeen, nil)
+	server.AddMessage("m1", "room-1", "alice", "first room message", lastSeen.Add(-time.Minute), nil)
+
+	display := map[string]any{"fname": "Engineering Platform"}
+	server.AddRoom("room-2", "c", "eng-platform", display)
+	server.AddSubscription("room-2", "c", "eng-platform", 0, 0, lastSeen, display)
+
+	r := newRunner(t, server, t.TempDir(), true)
+	r.waitForOutput("Rocket.Chat")
+	r.send(tea.KeyMsg{Type: tea.KeyCtrlT})
+	r.sendRunes(fakerc.AuthToken)
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Landing in a room leaves the composer focused, so this types into it.
+	r.waitForOutput("first room message")
+	r.sendRunes("see #eng")
+
+	// The list offers the slug with the display name beside it — the name in the
+	// sidebar is not what the server would resolve.
+	r.waitForOutput("#eng-platform  Engineering Platform")
+
+	r.send(tea.KeyMsg{Type: tea.KeyTab})
+	r.waitForOutput("see #eng-platform")
+
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+	waitUntil(t, "the completed mention was sent", func() bool {
+		for _, sent := range server.SentMessages() {
+			if sent.Text == "see #eng-platform" && sent.RoomID == "room-1" {
+				return true
+			}
+		}
+		return false
+	})
+
+	r.quit()
+}
+
 func TestEndToEndOpensThreadFromTimeline(t *testing.T) {
 	server := fakerc.New(t)
 	base := time.Now().Add(-time.Hour)

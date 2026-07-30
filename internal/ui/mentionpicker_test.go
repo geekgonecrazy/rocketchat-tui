@@ -40,27 +40,35 @@ func typeInto(m chatModel, text string) chatModel {
 func TestMentionTokenRules(t *testing.T) {
 	cases := []struct {
 		text  string
+		sigil byte
 		query string
 		start int
 		ok    bool
 	}{
-		{"@", "", 0, true},
-		{"@al", "al", 0, true},
-		{"hey @al", "al", 4, true},
-		{"hey @Al", "al", 4, true},
-		{"(@al", "al", 1, true},
-		{"hey @charlie.brown", "charlie.brown", 4, true},
-		// Not mentions: an address, a mid-word "@", and no "@" at all.
-		{"aaron@fide", "", 0, false},
-		{"x@y", "", 0, false},
-		{"hello", "", 0, false},
-		{"", "", 0, false},
+		{"@", '@', "", 0, true},
+		{"@al", '@', "al", 0, true},
+		{"hey @al", '@', "al", 4, true},
+		{"hey @Al", '@', "al", 4, true},
+		{"(@al", '@', "al", 1, true},
+		{"hey @charlie.brown", '@', "charlie.brown", 4, true},
+		// Rooms open the same way, on the other sigil.
+		{"#", '#', "", 0, true},
+		{"see #gen", '#', "gen", 4, true},
+		{"see #Gen", '#', "gen", 4, true},
+		{"(#gen", '#', "gen", 1, true},
+		// Not mentions: an address, a mid-word sigil, and no sigil at all.
+		{"aaron@fide", 0, "", 0, false},
+		{"x@y", 0, "", 0, false},
+		{"issue#42", 0, "", 0, false},
+		{"hello", 0, "", 0, false},
+		{"", 0, "", 0, false},
 		// The mention has to be what is being typed, not something further back.
-		{"@alice says", "", 0, false},
+		{"@alice says", 0, "", 0, false},
+		{"#general says", 0, "", 0, false},
 	}
 
 	for _, tc := range cases {
-		start, query, ok := mentionToken(tc.text)
+		start, sigil, query, ok := mentionToken(tc.text)
 		if ok != tc.ok {
 			t.Errorf("mentionToken(%q) ok = %v, want %v", tc.text, ok, tc.ok)
 			continue
@@ -68,36 +76,53 @@ func TestMentionTokenRules(t *testing.T) {
 		if !ok {
 			continue
 		}
-		if start != tc.start || query != tc.query {
-			t.Errorf("mentionToken(%q) = (%d, %q), want (%d, %q)",
-				tc.text, start, query, tc.start, tc.query)
+		if start != tc.start || sigil != tc.sigil || query != tc.query {
+			t.Errorf("mentionToken(%q) = (%d, %q, %q), want (%d, %q, %q)",
+				tc.text, start, string(sigil), query, tc.start, string(tc.sigil), tc.query)
 		}
 	}
 }
 
+// sampleMemberMentions is the roster as the completer consumes it.
+func sampleMemberMentions() []model.Mention {
+	mentions := make([]model.Mention, 0, len(sampleMembers()))
+	for _, member := range sampleMembers() {
+		mentions = append(mentions, member.Mention())
+	}
+	return mentions
+}
+
 func TestMentionMatchRanking(t *testing.T) {
 	// "b" prefixes bob and appears inside charlie.brown, so bob must come first.
-	matches := matchMembers(sampleMembers(), "b", mentionLimit)
+	matches := matchMentions(sampleMemberMentions(), specialMentions, "b", mentionLimit)
 	if len(matches) < 2 {
 		t.Fatalf("expected at least two matches, got %d", len(matches))
 	}
-	if matches[0].Username != "bob" {
-		t.Errorf("first match = %q, want bob", matches[0].Username)
+	if matches[0].Value != "bob" {
+		t.Errorf("first match = %q, want bob", matches[0].Value)
 	}
 
 	// A name-only match still counts: "patel" is not in any username.
-	matches = matchMembers(sampleMembers(), "patel", mentionLimit)
-	if len(matches) != 1 || matches[0].Username != "sanjay" {
+	matches = matchMentions(sampleMemberMentions(), specialMentions, "patel", mentionLimit)
+	if len(matches) != 1 || matches[0].Value != "sanjay" {
 		t.Errorf("name match = %+v, want sanjay", matches)
 	}
 
 	// Group mentions are offered, but never ahead of a person.
-	matches = matchMembers(sampleMembers(), "a", mentionLimit)
-	if matches[0].Username != "alice" {
-		t.Errorf("first match = %q, want alice ahead of @all", matches[0].Username)
+	matches = matchMentions(sampleMemberMentions(), specialMentions, "a", mentionLimit)
+	if matches[0].Value != "alice" {
+		t.Errorf("first match = %q, want alice ahead of @all", matches[0].Value)
 	}
-	if !containsUsername(matches, "all") {
+	if !containsValue(matches, "all") {
 		t.Error("@all missing from the candidates for a")
+	}
+
+	// The group mentions are matched on their value only: the descriptive text
+	// standing in for their display name must not drag them into unrelated
+	// queries.
+	matches = matchMentions(sampleMemberMentions(), specialMentions, "everyone", mentionLimit)
+	if containsValue(matches, "all") || containsValue(matches, "here") {
+		t.Errorf("group mention matched its description: %+v", matches)
 	}
 }
 
@@ -126,7 +151,7 @@ func TestMentionCompleterFiltersAsYouType(t *testing.T) {
 		t.Errorf("query = %q, want ch", m.mentions.query)
 	}
 	selected, ok := m.mentions.selected()
-	if !ok || selected.Username != "charlie.brown" {
+	if !ok || selected.Value != "charlie.brown" {
 		t.Errorf("selection = %+v, want charlie.brown", selected)
 	}
 }
@@ -177,7 +202,7 @@ func TestMentionCompleterNavigationAndDismiss(t *testing.T) {
 	first, _ := m.mentions.selected()
 	m, _ = m.Update(press("down"))
 	second, _ := m.mentions.selected()
-	if first.Username == second.Username {
+	if first.Value == second.Value {
 		t.Error("down did not move the selection")
 	}
 
@@ -232,15 +257,118 @@ func TestMentionCandidatesResetWhenTheRoomChanges(t *testing.T) {
 	// The group mentions are always available, but nobody from the old room is.
 	m = typeInto(m, "@")
 	for _, match := range m.mentions.matches {
-		if containsUsername(sampleMembers(), match.Username) {
-			t.Errorf("completer offered %q from the previous room", match.Username)
+		if containsValue(sampleMemberMentions(), match.Value) {
+			t.Errorf("completer offered %q from the previous room", match.Value)
 		}
 	}
 }
 
-func containsUsername(members []model.Member, username string) bool {
-	for _, member := range members {
-		if member.Username == username {
+// ---- channels ---------------------------------------------------------------
+
+func TestChannelCompleterOpensOnHash(t *testing.T) {
+	m := mentionChat(t)
+	m = typeInto(m, "see also #")
+
+	if !m.mentions.active() {
+		t.Fatal("completer not open after typing #")
+	}
+	if !containsValue(m.mentions.matches, "general") || !containsValue(m.mentions.matches, "random") {
+		t.Errorf("channels missing from the candidates: %+v", m.mentions.matches)
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "#general") {
+		t.Errorf("candidate list missing #general:\n%s", view)
+	}
+}
+
+func TestChannelCompleterFiltersAndInserts(t *testing.T) {
+	m := mentionChat(t)
+	m = typeInto(m, "see also #ran")
+
+	if m.mentions.query != "ran" {
+		t.Errorf("query = %q, want ran", m.mentions.query)
+	}
+	selected, ok := m.mentions.selected()
+	if !ok || selected.Value != "random" {
+		t.Fatalf("selection = %+v, want random", selected)
+	}
+
+	m, _ = m.Update(press("tab"))
+	if got := m.composer.Value(); got != "see also #random " {
+		t.Errorf("composer = %q, want %q", got, "see also #random ")
+	}
+	if m.mentions.active() {
+		t.Error("completer should close after accepting")
+	}
+}
+
+// A "#" mention names a room, so the sigil must switch which list is offered
+// even when a person shares the name.
+func TestChannelCompleterOffersRoomsNotPeople(t *testing.T) {
+	m := mentionChat(t)
+	m = typeInto(m, "#")
+
+	for _, match := range m.mentions.matches {
+		if match.Sigil != "#" {
+			t.Errorf("non-room candidate %+v offered for #", match)
+		}
+	}
+	// "@all" and "@here" are typed with an "@" and mean nothing after a "#".
+	if containsValue(m.mentions.matches, "all") || containsValue(m.mentions.matches, "here") {
+		t.Errorf("group mentions offered for #: %+v", m.mentions.matches)
+	}
+}
+
+// DMs carry a name on the wire — the other person — but are addressed by person
+// rather than pointed at, so they are never offered after a "#".
+func TestChannelCompleterSkipsDirectMessages(t *testing.T) {
+	m := mentionChat(t)
+	m = typeInto(m, "#a")
+	if containsValue(m.mentions.matches, "alice") {
+		t.Errorf("completer offered the DM with alice: %+v", m.mentions.matches)
+	}
+
+	// Nothing else is even close, so the list gets out of the way entirely.
+	m = typeInto(m, "lice")
+	if m.mentions.active() {
+		t.Errorf("completer stayed open on a DM name: %+v", m.mentions.matches)
+	}
+}
+
+func TestChannelCompleterStaysClosedMidWord(t *testing.T) {
+	m := mentionChat(t)
+	m = typeInto(m, "fixed issue#gen")
+
+	if m.mentions.active() {
+		t.Errorf("completer opened inside a word (query=%q)", m.mentions.query)
+	}
+}
+
+// Switching sigils mid-token must re-rank rather than leave the cursor pointing
+// into the previous list.
+func TestCompleterSwitchesBetweenSigils(t *testing.T) {
+	m := mentionChat(t)
+	m = typeInto(m, "@")
+	m, _ = m.Update(press("down"))
+	if selected, _ := m.mentions.selected(); selected.Sigil != "@" {
+		t.Fatalf("expected a person, got %+v", selected)
+	}
+
+	m.composer.Reset()
+	m = typeInto(m, "#")
+	selected, ok := m.mentions.selected()
+	if !ok || selected.Sigil != "#" {
+		t.Fatalf("expected a room, got %+v", selected)
+	}
+	if m.mentions.cursor != 0 {
+		t.Errorf("cursor = %d, want 0 after switching lists", m.mentions.cursor)
+	}
+}
+
+func containsValue(mentions []model.Mention, value string) bool {
+	for _, mention := range mentions {
+		if mention.Value == value {
 			return true
 		}
 	}

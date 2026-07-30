@@ -23,7 +23,8 @@ rooms and history immediately instead of an empty screen.
 - Thread view: browse a room's threads, read a thread, and reply into it
 - Emoji: shortcodes render as glyphs, `:jo` pops up an autocomplete while you
   type, and any message can be reacted to
-- Mentions: `@` autocompletes the people in the room, plus `@all` and `@here`
+- Mentions: `@` autocompletes the people in the room, plus `@all` and `@here`;
+  `#` autocompletes the rooms you are in
 - Works offline against the local cache; reconnects and resyncs automatically
 
 ## Install
@@ -80,7 +81,7 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `enter` | Rooms: open · Messages: open or start a thread · Composer: send |
 | `ctrl+t` | Thread list for this room — works while typing |
 | `r` | React to the selected message |
-| `@` | Autocomplete a mention while typing |
+| `@` / `#` | Autocomplete a person or a channel while typing |
 | `alt+enter` | Newline in the composer |
 | `/` | Filter the room list |
 | `g` | Load older messages |
@@ -117,6 +118,26 @@ the room, most recently spoken first — so the person you are replying to is
 usually the first suggestion, and the list still works from the cache when you
 are offline or when the server will not list a channel's members. An `@` in the
 middle of a word never opens the list, so email addresses are left alone.
+
+`#` works the same way for rooms:
+
+```
+› see also #eng
+  #eng-platform  Engineering Platform
+  #engineering  Engineering
+```
+
+This is worth having because a channel's mentionable name is its slug, not the
+display name in the sidebar — `#eng-platform` is what the server links, even
+though the room reads as "Engineering Platform". The list inserts the slug and
+shows the display name beside it.
+
+Candidates are the rooms you are subscribed to, most recently active first.
+Direct messages are not offered: they are addressed by person, not pointed at.
+Public channels you have not joined are not offered either — they are
+mentionable on the server, but finding them would mean a live search, and this
+list is the one already on your machine. A `#` in the middle of a word never
+opens it, so `issue#42` is left alone.
 
 ### Emoji and reactions
 
