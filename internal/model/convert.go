@@ -62,25 +62,39 @@ func FromRocketMessage(src rocket.Message, selfID, selfUsername string) Message 
 	sort.Slice(msg.Reactions, func(i, j int) bool { return msg.Reactions[i].Emoji < msg.Reactions[j].Emoji })
 
 	for _, attachment := range src.Attachments {
-		converted := Attachment{
-			Title:  firstNonEmpty(attachment.Title, attachment.AuthorName),
-			Text:   firstNonEmpty(attachment.Text, attachment.Description),
-			Link:   firstNonEmpty(attachment.TitleLink, attachment.ImageURL),
-			MIME:   attachment.ImageType,
-			Size:   attachment.ImageSize,
-			Upload: attachment.TitleLinkDownload,
+		if converted, ok := FromRocketAttachment(attachment); ok {
+			msg.Attachments = append(msg.Attachments, converted)
 		}
-		// ImageURL is the renderable bytes and wins; TitleLink is the download
-		// route for an upload the server sent no preview for (a PDF, a zip).
-		// A link preview sets neither of those to something we own, so Upload
-		// stays false and the file is only ever opened, never saved as ours.
-		converted.Source = firstNonEmpty(attachment.ImageURL, downloadLink(attachment))
-		if converted.Title == "" && converted.Text == "" && converted.Link == "" {
-			continue
-		}
-		msg.Attachments = append(msg.Attachments, converted)
 	}
 	return msg
+}
+
+// FromRocketAttachment converts one wire attachment into the view type, and
+// reports false for one with nothing to show at all — no title, no text and no
+// link would render as a blank line in the timeline.
+//
+// This is the only attachment conversion. The store round-trips the wire form
+// through the message cache and every message the UI draws is read back out of
+// it, so a field filled in only here and not there is a field the UI never
+// sees: an image whose Source is missing is neither drawable nor fetchable.
+func FromRocketAttachment(attachment rocket.Attachment) (Attachment, bool) {
+	converted := Attachment{
+		Title:  firstNonEmpty(attachment.Title, attachment.AuthorName),
+		Text:   firstNonEmpty(attachment.Text, attachment.Description),
+		Link:   firstNonEmpty(attachment.TitleLink, attachment.ImageURL),
+		MIME:   attachment.ImageType,
+		Size:   attachment.ImageSize,
+		Upload: attachment.TitleLinkDownload,
+	}
+	// ImageURL is the renderable bytes and wins; TitleLink is the download
+	// route for an upload the server sent no preview for (a PDF, a zip).
+	// A link preview sets neither of those to something we own, so Upload
+	// stays false and the file is only ever opened, never saved as ours.
+	converted.Source = firstNonEmpty(attachment.ImageURL, downloadLink(attachment))
+	if converted.Title == "" && converted.Text == "" && converted.Link == "" {
+		return Attachment{}, false
+	}
+	return converted, true
 }
 
 // downloadLink is the title link, but only when the server marked it as a file

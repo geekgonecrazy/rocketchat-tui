@@ -435,15 +435,12 @@ func decodeAttachments(raw string) ([]model.Attachment, error) {
 	}
 	var attachments []model.Attachment
 	for _, attachment := range wire {
-		converted := model.Attachment{
-			Title: firstNonEmpty(attachment.Title, attachment.AuthorName),
-			Text:  firstNonEmpty(attachment.Text, attachment.Description),
-			Link:  firstNonEmpty(attachment.TitleLink, attachment.ImageURL),
+		// Shared with the live path on purpose. Building a model.Attachment
+		// here by hand is how this silently lost Source and MIME, which is
+		// every field the viewer needs to fetch and draw an image.
+		if converted, ok := model.FromRocketAttachment(attachment); ok {
+			attachments = append(attachments, converted)
 		}
-		if converted.Title == "" && converted.Text == "" && converted.Link == "" {
-			continue
-		}
-		attachments = append(attachments, converted)
 	}
 	return attachments, nil
 }

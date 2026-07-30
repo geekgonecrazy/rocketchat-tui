@@ -228,6 +228,87 @@ func TestSaveMessagesUpsertsAndOrders(t *testing.T) {
 	}
 }
 
+// The cache is the only path the UI reads messages through, so an attachment
+// field that does not survive the round trip is a field the UI never has. The
+// viewer needs Source and MIME specifically: without them IsImage is false and
+// the fetch has no URL, so an uploaded screenshot is neither drawn nor saveable.
+func TestUploadedImageSurvivesTheRoundTrip(t *testing.T) {
+	s := openStore(t)
+	// Shaped like a real upload: the server points image_url at the thumbnail
+	// it generated and title_link at the full-size file.
+	if err := s.SaveMessages([]rocket.Message{{
+		ID: "m1", RoomID: "r1", Msg: "", Timestamp: ts(time.Now()),
+		User: rocket.User{ID: "u1", Username: "alice"},
+		Attachments: []rocket.Attachment{{
+			Title:             "screenshot.png",
+			TitleLink:         "/file-upload/full/screenshot.png",
+			TitleLinkDownload: true,
+			ImageURL:          "/file-upload/thumb/screenshot.png",
+			ImageType:         "image/png",
+			ImageSize:         128404,
+		}},
+	}}); err != nil {
+		t.Fatalf("SaveMessages: %v", err)
+	}
+
+	timeline, err := s.RoomTimeline("r1", 10)
+	if err != nil {
+		t.Fatalf("RoomTimeline: %v", err)
+	}
+	if len(timeline) != 1 || len(timeline[0].Attachments) != 1 {
+		t.Fatalf("got %d messages, want 1 carrying 1 attachment", len(timeline))
+	}
+
+	attachment := timeline[0].Attachments[0]
+	if attachment.Source != "/file-upload/thumb/screenshot.png" {
+		t.Errorf("Source = %q, want the image url", attachment.Source)
+	}
+	if attachment.MIME != "image/png" {
+		t.Errorf("MIME = %q, want image/png", attachment.MIME)
+	}
+	if attachment.Size != 128404 {
+		t.Errorf("Size = %d, want 128404", attachment.Size)
+	}
+	if !attachment.Upload {
+		t.Error("Upload = false, so the file cannot be saved as ours")
+	}
+	if !attachment.IsImage() {
+		t.Error("IsImage() = false, so the viewer will not open it")
+	}
+}
+
+// A card the server unfurled from a link is somebody else's page, not a file we
+// own. It must come back out of the cache still marked that way.
+func TestLinkPreviewIsNotTreatedAsAnUpload(t *testing.T) {
+	s := openStore(t)
+	if err := s.SaveMessages([]rocket.Message{{
+		ID: "m1", RoomID: "r1", Msg: "look", Timestamp: ts(time.Now()),
+		User: rocket.User{ID: "u1", Username: "alice"},
+		Attachments: []rocket.Attachment{{
+			Title:       "Some Article",
+			TitleLink:   "https://example.com/article",
+			Description: "a page somebody linked",
+		}},
+	}}); err != nil {
+		t.Fatalf("SaveMessages: %v", err)
+	}
+
+	timeline, err := s.RoomTimeline("r1", 10)
+	if err != nil {
+		t.Fatalf("RoomTimeline: %v", err)
+	}
+	if len(timeline) != 1 || len(timeline[0].Attachments) != 1 {
+		t.Fatalf("got %d messages, want 1 carrying 1 attachment", len(timeline))
+	}
+	attachment := timeline[0].Attachments[0]
+	if attachment.Upload {
+		t.Error("Upload = true, which would offer to save somebody else's page as a file")
+	}
+	if attachment.Source != "" {
+		t.Errorf("Source = %q, want empty: there is no file behind a link card", attachment.Source)
+	}
+}
+
 func TestOwnMessagesAreFlagged(t *testing.T) {
 	s := openStore(t)
 	if err := s.SaveMessages([]rocket.Message{
