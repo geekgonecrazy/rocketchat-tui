@@ -125,6 +125,26 @@ func (s *Server) handleRoomInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotFound, map[string]any{"success": false, "error": "room not found"})
 }
 
+// members were registered for.
+func (s *Server) handleMembers(w http.ResponseWriter, r *http.Request) {
+	roomID := r.URL.Query().Get("roomId")
+	s.mu.Lock()
+	members := append([]map[string]any(nil), s.members[roomID]...)
+	// Recorded so tests can check the client picked the right endpoint for the
+	// room type; a real server rejects the wrong one.
+	s.memberPaths = append(s.memberPaths, r.URL.Path)
+	s.mu.Unlock()
+	if members == nil {
+		members = []map[string]any{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"members": members,
+		"count":   len(members),
+		"total":   len(members),
+		"success": true,
+	})
+}
+
 // handleMembers returns the room's roster, or an empty list for a room no
 // members were registered for.
 func (s *Server) handleMembers(w http.ResponseWriter, r *http.Request) {

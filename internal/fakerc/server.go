@@ -63,8 +63,11 @@ type Server struct {
 	subscriptions []map[string]any
 	messages      []map[string]any
 	threads       []map[string]any
-	members       map[string][]map[string]any
+>>>>>>> 1
 	memberPaths   []string
+======= 1 [AZA7VWAJ]
+	s := &Server{t: t, members: make(map[string][]map[string]any)}
+<<<<<<< 1
 	conns         []*wsConn
 	notifications []Notification
 	sent          []SentMessage
@@ -367,3 +370,29 @@ func (s *Server) ReadRooms() []string {
 }
 
 func isoNow() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+	members       map[string][]map[string]any
+	memberPaths   []string
+	mux.HandleFunc("/api/v1/channels.members", s.authed(s.handleMembers))
+	mux.HandleFunc("/api/v1/groups.members", s.authed(s.handleMembers))
+	mux.HandleFunc("/api/v1/im.members", s.authed(s.handleMembers))
+// AddMembers registers who is in a room, as the members endpoints report them.
+func (s *Server) AddMembers(roomID string, usernames ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, username := range usernames {
+		s.members[roomID] = append(s.members[roomID], map[string]any{
+			"_id":      "user-" + username,
+			"username": username,
+			"name":     strings.ToUpper(username[:1]) + username[1:],
+			"status":   "online",
+		})
+	}
+}
+
+// MemberPaths returns the members endpoints the client called, in order.
+func (s *Server) MemberPaths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.memberPaths...)
+}
+

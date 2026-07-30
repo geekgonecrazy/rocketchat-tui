@@ -76,6 +76,13 @@ type Core struct {
 	// cannot pin the indicator on forever.
 	typists map[string]map[string]time.Time
 
+	// room does not re-list its members on every open.
+	membersSynced map[string]time.Time
+
+		membersSynced:    make(map[string]time.Time),
+			// An explicit resync means "now", so the roster's TTL does not apply.
+			delete(c.membersSynced, c.currentRoom)
+			c.syncMembers(c.currentRoom)
 	// membersSynced is when each room's roster was last fetched, so revisiting a
 	// room does not re-list its members on every open.
 	membersSynced map[string]time.Time

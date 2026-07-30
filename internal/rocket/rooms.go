@@ -4,6 +4,48 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+// membersEndpoint maps a room type onto its type-specific members endpoint.
+func membersEndpoint(roomType string) (string, error) {
+	switch roomType {
+	case RoomTypeChannel, RoomTypeLive:
+		return "channels.members", nil
+	case RoomTypePrivate:
+		return "groups.members", nil
+	case RoomTypeDirect:
+		return "im.members", nil
+	case "":
+		return "", fmt.Errorf("rocket: room type is required to list members")
+	default:
+		return "", fmt.Errorf("rocket: unsupported room type %q", roomType)
+	}
+}
+
+// RoomMembers lists the users in a room, newest joiners last.
+//
+// count bounds the page; the server caps it well below the size of a busy
+// channel, so callers should treat the result as "the members worth offering"
+// rather than a complete roster.
+func (c *Client) RoomMembers(ctx context.Context, roomID, roomType string, count int) ([]User, error) {
+	endpoint, err := membersEndpoint(roomType)
+	if err != nil {
+		return nil, err
+	}
+	if count <= 0 {
+		count = 100
+	}
+	query := url.Values{
+		"roomId": {roomID},
+		"count":  {strconv.Itoa(count)},
+	}
+	var resp struct {
+		Members []User `json:"members"`
+	}
+	if err := c.do(ctx, request{method: "GET", endpoint: endpoint, query: query}, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Members, nil
+}
+
 	"strconv"
 	"strings"
 	"time"

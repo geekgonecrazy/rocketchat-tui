@@ -20,8 +20,11 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		return m.handleReactPickerKey(msg)
 	}
 
-	// The mention completer claims its navigation keys before the global
+>>>>>>> 1
 	// bindings do, for the same reason the emoji one does below.
+======= 1 [AZA7VWAJ]
+	// The completers follow the text rather than being summoned by a key, so they
+<<<<<<< 1
 	if m.mentions.active() {
 		switch pressed {
 		case "up", "ctrl+p":
@@ -272,6 +275,290 @@ func (m *chatModel) openRoom(roomID string) tea.Cmd {
 	if roomID == "" {
 		return nil
 	}
+	if m.activeRoom != "" && m.activeRoom != roomID {
+		m.core.StopTyping(m.activeRoom)
+	}
+	m.activeRoom = roomID
+	m.mode = bodyTimeline
+	m.threadID = ""
+	m.threadReplies = nil
+	m.threadParent = model.Message{}
+	m.messages = nil
+	m.threads = nil
+	m.msgCursor = -1
+	m.cursorMsgID = ""
+	m.scroll = 0
+	m.pinnedToBottom = true
+	m.jumpToUnread = true
+	m.composer.Reset()
+	m.composer.SetHeight(1)
+	m.focus = focusComposer
+	m.composer.Focus()
+	m.mentions.close()
+	// Candidates are per room; the previous room's people must not be offered
+	// here while this room's roster loads.
+	m.members = nil
+
+	// Keep the sidebar cursor on the room we just opened.
+	for i, room := range m.visible {
+		if room.ID == roomID {
+			m.roomCursor = i
+			break
+		}
+	}
+
+	m.core.OpenRoom(roomID)
+	m.rebuildBody()
+	return textarea.Blink
+}
+
+func (m chatModel) send() (chatModel, tea.Cmd) {
+	text := strings.TrimSpace(m.composer.Value())
+	if text == "" || m.activeRoom == "" || m.room.ReadOnly {
+		return m, nil
+	}
+	threadID := ""
+	if m.mode == bodyThread {
+		threadID = m.threadID
+	}
+	m.core.Send(m.activeRoom, threadID, text)
+	m.composer.Reset()
+	m.composer.SetHeight(1)
+	m.mentions.close()
+	m.pinnedToBottom = true
+	m.scrollToBottom()
+	return m, nil
+}
+
+func (m chatModel) toggleThreadList() (chatModel, tea.Cmd) {
+	if m.mode == bodyThreadList {
+		return m.showTimeline()
+	}
+	m.mode = bodyThreadList
+	m.threadsIndex = 0
+	m.scroll = 0
+	m.pinnedToBottom = false
+	m.core.RefreshThreadList(m.activeRoom)
+	m.rebuildBody()
+	return m, nil
+}
+
+func (m chatModel) showTimeline() (chatModel, tea.Cmd) {
+	m.mode = bodyTimeline
+	m.threadID = ""
+	m.core.CloseThread()
+	m.scroll = 0
+	m.pinnedToBottom = true
+	m.rebuildBody()
+	m.scrollToBottom()
+	return m, nil
+}
+
+// openSelectedThread opens the thread on the selected message. Any message can
+// anchor a thread, so this both opens existing threads and starts new ones.
+func (m chatModel) openSelectedThread() (chatModel, tea.Cmd) {
+	var threadID string
+	switch m.mode {
+	case bodyThreadList:
+		if m.threadsIndex < len(m.threads) {
+			threadID = m.threads[m.threadsIndex].ID
+		}
+	case bodyTimeline:
+		if m.msgCursor >= 0 && m.msgCursor < len(m.messages) {
+			selected := m.messages[m.msgCursor]
+			threadID = selected.ID
+			if selected.IsThreadReply() {
+				threadID = selected.ThreadID
+			}
+		}
+	}
+	if threadID == "" {
+		return m, nil
+	}
+
+	m.threadID = threadID
+	m.mode = bodyThread
+	m.threadCursor = -1
+	m.scroll = 0
+	m.pinnedToBottom = true
+	m.focus = focusComposer
+	m.composer.Focus()
+	m.composer.Reset()
+	m.core.OpenThread(m.activeRoom, threadID)
+	m.rebuildBody()
+	return m, textarea.Blink
+}
+
+// acceptCompletion replaces the ":prefix" being typed with the chosen glyph.
+func (m chatModel) acceptCompletion() (chatModel, tea.Cmd) {
+	completed, ok := m.picker.complete(m.composer.Value())
+	if !ok {
+		m.picker.close()
+		return m, nil
+	}
+	m.composer.SetValue(completed)
+	m.picker.close()
+	m.rebuildBody()
+	if m.activeRoom != "" {
+		m.core.UserTyping(m.activeRoom)
+	}
+	return m, nil
+}
+
+// acceptMention replaces the "@prefix" being typed with the chosen username.
+func (m chatModel) acceptMention() (chatModel, tea.Cmd) {
+	completed, ok := m.mentions.complete(m.composer.Value())
+	if !ok {
+		m.mentions.close()
+		return m, nil
+	}
+	m.composer.SetValue(completed)
+	m.mentions.close()
+	m.rebuildBody()
+	if m.activeRoom != "" {
+		m.core.UserTyping(m.activeRoom)
+	}
+	return m, nil
+}
+
+// openReactPicker opens the modal picker for the selected message.
+func (m chatModel) openReactPicker() (chatModel, tea.Cmd) {
+	target := m.selectedMessage()
+	if target == "" {
+		m.notice, m.noticeErr = "select a message first", false
+		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return clearNoticeMsg{} })
+	}
+	m.picker.openReact(target)
+	m.composer.Blur()
+	m.rebuildBody()
+	return m, nil
+}
+
+// selectedMessage is the id the cursor is on, in whichever pane is showing.
+func (m chatModel) selectedMessage() string {
+	switch m.mode {
+	case bodyThread:
+		if m.threadCursor >= 0 && m.threadCursor < len(m.threadReplies) {
+			return m.threadReplies[m.threadCursor].ID
+		}
+		return m.threadID
+	case bodyThreadList:
+		if m.threadsIndex >= 0 && m.threadsIndex < len(m.threads) {
+			return m.threads[m.threadsIndex].ID
+		}
+	default:
+		if m.msgCursor >= 0 && m.msgCursor < len(m.messages) {
+			return m.messages[m.msgCursor].ID
+		}
+	}
+	return ""
+}
+
+// handleReactPickerKey drives the modal picker.
+func (m chatModel) handleReactPickerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.picker.close()
+		m.rebuildBody()
+		cmd := m.syncComposerFocus()
+		return m, cmd
+	case "up", "ctrl+p", "shift+tab":
+		m.picker.move(-1)
+		return m, nil
+	case "down", "ctrl+n", "tab":
+		m.picker.move(1)
+		return m, nil
+	case "enter":
+		return m.applyReaction()
+	case "backspace":
+		if m.picker.query != "" {
+			runes := []rune(m.picker.query)
+			m.picker.query = string(runes[:len(runes)-1])
+			m.picker.refresh()
+			m.rebuildBody()
+		}
+		return m, nil
+	default:
+		if len(msg.Runes) > 0 {
+			m.picker.query += strings.ToLower(string(msg.Runes))
+			m.picker.refresh()
+			m.rebuildBody()
+		}
+		return m, nil
+	}
+}
+
+// applyReaction toggles the highlighted emoji on the target message.
+func (m chatModel) applyReaction() (chatModel, tea.Cmd) {
+	match, ok := m.picker.selected()
+	if !ok {
+		m.picker.close()
+		return m, nil
+	}
+	target := m.picker.target
+	m.core.React(target, match.Name, !m.alreadyReacted(target, match.Name))
+	m.picker.close()
+	m.rebuildBody()
+	cmd := m.syncComposerFocus()
+	return m, cmd
+}
+
+// alreadyReacted reports whether the user has this reaction on a message, which
+// is what makes the picker and clicks toggle rather than only ever add.
+func (m chatModel) alreadyReacted(messageID, shortcode string) bool {
+	want := ":" + strings.Trim(shortcode, ":") + ":"
+	for _, list := range [][]model.Message{m.messages, m.threadReplies, {m.threadParent}} {
+		for _, msg := range list {
+			if msg.ID != messageID {
+				continue
+			}
+			for _, reaction := range msg.Reactions {
+				if reaction.Emoji == want {
+					return reaction.Mine
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (m *chatModel) syncComposerFocus() tea.Cmd {
+	if m.focus == focusComposer {
+		m.composer.Focus()
+		return textarea.Blink
+	}
+	m.composer.Blur()
+	return nil
+}
+	// The mention completer claims its navigation keys before the global
+	// bindings do, for the same reason the emoji one does below.
+	if m.mentions.active() {
+		switch pressed {
+		case "up", "ctrl+p":
+			m.mentions.move(-1)
+			return m, nil
+		case "down", "ctrl+n":
+			m.mentions.move(1)
+			return m, nil
+		case "tab", "enter":
+			return m.acceptMention()
+		case "esc":
+			m.mentions.close()
+			m.rebuildBody()
+			return m, nil
+		}
+	}
+
+	// have to be recomputed on every edit.
+		m.mentions.sync(after, m.members)
+		if m.mentions.active() {
+			m.picker.close()
+		} else {
+			m.picker.syncCompletion(after)
+		}
+		m.rebuildBody() // the list changes how much room the body has
 	// Re-entering the room already on screen must not clear the view: the core is
 	// already on this room, so it emits nothing and there is no timeline, roster
 	// or room header coming to refill the pane. Step into it instead.

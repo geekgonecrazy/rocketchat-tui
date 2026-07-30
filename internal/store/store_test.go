@@ -710,6 +710,72 @@ func TestReactionsAreMarkedAsOwn(t *testing.T) {
 		t.Errorf("reactions not sorted: %+v", timeline[0].Reactions)
 	}
 }
+func TestMentionCandidatesMergeMembersAndSpeakers(t *testing.T) {
+	s := openStore(t)
+	now := time.Now().Truncate(time.Millisecond)
+
+	if err := s.SaveRoomMembers("r1", []rocket.User{
+		{ID: "u1", Username: "dana", Name: "Dana Scully"},
+		{ID: "u2", Username: "alice", Name: "Alice Adams"},
+		{ID: "u3", Username: "me", Name: "Me"},
+	}); err != nil {
+		t.Fatalf("SaveRoomMembers: %v", err)
+	}
+	if err := s.SaveMessages([]rocket.Message{
+		{ID: "m1", RoomID: "r1", Msg: "hi", Timestamp: ts(now.Add(-time.Minute)),
+			User: rocket.User{ID: "u4", Username: "zoe", Name: "Zoe Zheng"}},
+		{ID: "m2", RoomID: "r2", Msg: "elsewhere", Timestamp: ts(now),
+			User: rocket.User{ID: "u5", Username: "otherroom"}},
+	}); err != nil {
+		t.Fatalf("SaveMessages: %v", err)
+	}
+
+	members, err := s.MentionCandidates("r1")
+	if err != nil {
+		t.Fatalf("MentionCandidates: %v", err)
+	}
+
+	var names []string
+	for _, member := range members {
+		names = append(names, member.Username)
+	}
+	// Recent speakers first, then members who have not spoken, alphabetically.
+	want := []string{"zoe", "alice", "dana"}
+	if len(names) != len(want) {
+		t.Fatalf("candidates = %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("candidates = %v, want %v", names, want)
+		}
+	}
+	if members[0].Name != "Zoe Zheng" {
+		t.Errorf("display name = %q, want Zoe Zheng", members[0].Name)
+	}
+}
+
+func TestSaveRoomMembersReplacesTheRoster(t *testing.T) {
+	s := openStore(t)
+	if err := s.SaveRoomMembers("r1", []rocket.User{{Username: "gone"}, {Username: "stays"}}); err != nil {
+		t.Fatalf("first SaveRoomMembers: %v", err)
+	}
+	if err := s.SaveRoomMembers("r1", []rocket.User{{Username: "stays"}, {Username: "joined"}}); err != nil {
+		t.Fatalf("second SaveRoomMembers: %v", err)
+	}
+
+	members, err := s.MentionCandidates("r1")
+	if err != nil {
+		t.Fatalf("MentionCandidates: %v", err)
+	}
+	for _, member := range members {
+		if member.Username == "gone" {
+			t.Error("a member who left is still offered")
+		}
+	}
+	if len(members) != 2 {
+		t.Errorf("candidates = %+v, want stays and joined", members)
+	}
+}
 
 func TestMentionCandidatesMergeMembersAndSpeakers(t *testing.T) {
 	s := openStore(t)
