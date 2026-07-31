@@ -420,7 +420,7 @@ func runDirectMessage(ctx context.Context, c *Core, inv invocation) error {
 		return err
 	}
 	if text = strings.TrimSpace(text); text != "" {
-		if err := c.sendText(ctx, room.ID, "", text); err != nil {
+		if err := c.sendText(ctx, room.ID, "", text, false); err != nil {
 			return err
 		}
 	}
@@ -438,7 +438,10 @@ func runDirectMessage(ctx context.Context, c *Core, inv invocation) error {
 func decorator(suffix string) localHandler {
 	return func(ctx context.Context, c *Core, inv invocation) error {
 		text := strings.TrimSpace(strings.TrimSpace(inv.Params) + " " + suffix)
-		if err := c.sendText(ctx, inv.RoomID, inv.ThreadID, text); err != nil {
+		// Commands do not carry the mirror toggle: the server-run ones have no way
+		// to express it, and a /shrug that behaved differently from its neighbours
+		// would be the odd one out.
+		if err := c.sendText(ctx, inv.RoomID, inv.ThreadID, text, false); err != nil {
 			return err
 		}
 		c.enqueue(func(c *Core) { c.refreshAfterSend(inv.RoomID, inv.ThreadID) })

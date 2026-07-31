@@ -94,6 +94,9 @@ type ComposerState struct {
 	View       string
 	Prompt     string
 	ReplyingTo string
+	// AlsoToChannel is the state of the "also send to channel" toggle, shown on
+	// the thread banner. It only means anything while ReplyingTo is set.
+	AlsoToChannel bool
 	// Editing marks the box as rewriting a posted message rather than composing
 	// a new one.
 	Editing  bool
@@ -124,8 +127,7 @@ func Composer(theme Theme, state ComposerState) []string {
 		lines = append(lines, theme.UnreadRule.Render(
 			Truncate("  ✎ editing a sent message — enter saves, esc cancels", state.Width)))
 	case state.ReplyingTo != "":
-		lines = append(lines, theme.ThreadHint.Render(
-			Truncate("  ↳ replying in thread: "+state.ReplyingTo, state.Width)))
+		lines = append(lines, theme.ThreadHint.Render(threadBanner(state)))
 	}
 
 	if len(state.Attachments) > 0 {
@@ -144,6 +146,28 @@ func Composer(theme Theme, state ComposerState) []string {
 		lines = append(lines, strings.Repeat(" ", Width(prompt))+line)
 	}
 	return lines
+}
+
+// threadBanner is the "replying in thread" line, with the state of the mirror
+// toggle on its right.
+//
+// The toggle is what gets the space it needs: a truncated parent preview still
+// tells the user which thread they are in, but a truncated checkbox would hide
+// that the next message is about to go to the whole room as well.
+func threadBanner(state ComposerState) string {
+	box := "[ ]"
+	if state.AlsoToChannel {
+		box = "[✓]"
+	}
+	toggle := box + " also to channel (alt+c)"
+
+	head := "  ↳ replying in thread: "
+	if room := state.Width - Width(head) - Width(" · ") - Width(toggle); room >= 8 {
+		return head + Truncate(state.ReplyingTo, room) + " · " + toggle
+	}
+	// Too narrow for both. A few cells of parent text would say little that the
+	// thread pane above does not already show; the checkbox has no such backup.
+	return Truncate("  ↳ thread · "+toggle, state.Width)
 }
 
 // attachmentLine renders the queued files on one line.
@@ -210,6 +234,7 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"enter", "rooms: open · messages: open or start a thread · composer: send"},
 		{"↑ (composer)", "edit your last message; again for the one before"},
 		{"ctrl+t", "threads in this room — works while typing"},
+		{"alt+c", "in a thread: also send your reply to the channel"},
 		{"r", "react to the selected message"},
 		{"alt+enter", "newline in the composer"},
 		{"click", "a room, a message, a ↳ replies line, or a reaction to toggle it"},
@@ -275,6 +300,10 @@ func HelpOverlay(theme Theme, width int) []string {
 			"click it) and press enter, then type your reply.", max(1, width-4))),
 		"  "+theme.Muted.Render(Truncate(
 			"ctrl+t lists every thread in the room. esc returns to the timeline.", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"alt+c ticks \"also to channel\" on the composer: what you send then", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"shows in the room as well, marked ↱ with the thread it came from.", max(1, width-4))),
 	)
 
 	lines = append(lines,

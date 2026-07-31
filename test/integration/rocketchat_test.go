@@ -227,7 +227,7 @@ func TestLiveServerEndToEnd(t *testing.T) {
 
 	// Send, then confirm it comes back through the store as our own message.
 	const text = "hello from the rctui integration test"
-	h.core.Send(general.ID, "", text)
+	h.core.Send(app.SendRequest{RoomID: general.ID, Text: text})
 
 	timeline := waitFor(t, "the sent message to appear", func() (app.TimelineUpdated, bool) {
 		events := h.snapshot()
@@ -267,7 +267,11 @@ func TestLiveServerEndToEnd(t *testing.T) {
 			parentID = msg.ID
 		}
 	}
-	h.core.Send(general.ID, parentID, "threaded reply from the integration test")
+	h.core.Send(app.SendRequest{
+		RoomID:   general.ID,
+		ThreadID: parentID,
+		Text:     "threaded reply from the integration test",
+	})
 	h.core.OpenThread(general.ID, parentID)
 
 	thread := waitFor(t, "the thread to load", func() (app.ThreadUpdated, bool) {

@@ -437,7 +437,7 @@ func TestSendPostsMessageAndShowsIt(t *testing.T) {
 	h.core.OpenRoom("room-1")
 	waitFor(t, "room open", func() (app.TimelineUpdated, bool) { return h.lastTimeline("room-1") })
 
-	h.core.Send("room-1", "", "hello from the terminal")
+	h.core.Send(app.SendRequest{RoomID: "room-1", Text: "hello from the terminal"})
 
 	timeline := waitFor(t, "sent message in timeline", func() (app.TimelineUpdated, bool) {
 		snapshot, ok := h.lastTimeline("room-1")
@@ -475,7 +475,7 @@ func TestEditRewritesTheMessageInTheTimeline(t *testing.T) {
 	h.core.OpenRoom("room-1")
 	waitFor(t, "room open", func() (app.TimelineUpdated, bool) { return h.lastTimeline("room-1") })
 
-	h.core.Send("room-1", "", "teh first draft")
+	h.core.Send(app.SendRequest{RoomID: "room-1", Text: "teh first draft"})
 	sent := waitFor(t, "sent message in timeline", func() (app.TimelineUpdated, bool) {
 		snapshot, ok := h.lastTimeline("room-1")
 		if !ok {
@@ -606,7 +606,7 @@ func TestThreadsLoadAndReplyTargetsThread(t *testing.T) {
 		t.Errorf("unexpected reply: %+v", thread.Replies[0])
 	}
 
-	h.core.Send("room-1", "parent-1", "my reply")
+	h.core.Send(app.SendRequest{RoomID: "room-1", ThreadID: "parent-1", Text: "my reply"})
 	waitFor(t, "threaded reply posted", func() (bool, bool) {
 		for _, posted := range h.server.SentMessages() {
 			if posted.ThreadID == "parent-1" && posted.Text == "my reply" {
@@ -615,6 +615,94 @@ func TestThreadsLoadAndReplyTargetsThread(t *testing.T) {
 		}
 		return false, false
 	})
+}
+
+// A reply sent with "also send to channel" has to carry tshow to the server and
+// then land in the room timeline, not only in the thread.
+func TestReplyAlsoSentToChannelIsMirroredIntoTheTimeline(t *testing.T) {
+	h := newHarness(t)
+	base := time.Now().Add(-time.Hour)
+	h.seedRoom("room-1", "general", 0, 0, base)
+	h.server.AddMessage("parent-1", "room-1", "alice", "ship it?", base, nil)
+
+	h.start()
+	h.waitConnected()
+	h.core.OpenRoom("room-1")
+	waitFor(t, "room open", func() (app.TimelineUpdated, bool) { return h.lastTimeline("room-1") })
+
+	h.core.Send(app.SendRequest{
+		RoomID:            "room-1",
+		ThreadID:          "parent-1",
+		Text:              "shipped",
+		AlsoSendToChannel: true,
+	})
+
+	sent := waitFor(t, "the reply posted", func() ([]fakerc.SentMessage, bool) {
+		posted := h.server.SentMessages()
+		return posted, len(posted) == 1
+	})
+	if !sent[0].AlsoSendToChannel {
+		t.Errorf("tshow not sent: %+v", sent[0])
+	}
+
+	waitFor(t, "the reply in the room timeline", func() (bool, bool) {
+		timeline, ok := h.lastTimeline("room-1")
+		if !ok {
+			return false, false
+		}
+		for _, msg := range timeline.Messages {
+			if msg.Text == "shipped" {
+				if !msg.ShowInParent || msg.ThreadID != "parent-1" {
+					t.Errorf("mirrored reply lost its thread context: %+v", msg)
+				}
+				return true, true
+			}
+		}
+		return false, false
+	})
+}
+
+// Without the flag the reply belongs to the thread alone.
+func TestPlainReplyStaysOutOfTheTimeline(t *testing.T) {
+	h := newHarness(t)
+	base := time.Now().Add(-time.Hour)
+	h.seedRoom("room-1", "general", 0, 0, base)
+	h.server.AddMessage("parent-1", "room-1", "alice", "ship it?", base, nil)
+
+	h.start()
+	h.waitConnected()
+	h.core.OpenRoom("room-1")
+	waitFor(t, "room open", func() (app.TimelineUpdated, bool) { return h.lastTimeline("room-1") })
+
+	h.core.Send(app.SendRequest{RoomID: "room-1", ThreadID: "parent-1", Text: "quietly"})
+
+	sent := waitFor(t, "the reply posted", func() ([]fakerc.SentMessage, bool) {
+		posted := h.server.SentMessages()
+		return posted, len(posted) == 1
+	})
+	if sent[0].AlsoSendToChannel {
+		t.Errorf("tshow sent for a plain reply: %+v", sent[0])
+	}
+
+	h.core.OpenThread("room-1", "parent-1")
+	waitFor(t, "the reply in the thread", func() (bool, bool) {
+		for _, event := range h.snapshot() {
+			if update, ok := event.(app.ThreadUpdated); ok {
+				for _, reply := range update.Replies {
+					if reply.Text == "quietly" {
+						return true, true
+					}
+				}
+			}
+		}
+		return false, false
+	})
+	timeline, _ := h.lastTimeline("room-1")
+	for _, msg := range timeline.Messages {
+		if msg.Text == "quietly" {
+			t.Error("a plain thread reply leaked into the main timeline")
+		}
+	}
 }
 
 func TestOpenThreadFetchesParentOutsideCachedHistory(t *testing.T) {

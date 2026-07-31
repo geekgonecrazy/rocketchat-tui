@@ -26,6 +26,11 @@ type TimelineState struct {
 	HasMore     bool
 	LoadingMore bool
 	Empty       string // placeholder when there are no messages
+	// InThread marks this as the thread pane rather than the room timeline. The
+	// two draw the same messages but annotate a mirrored reply — one sent with
+	// "also send to channel" — from opposite sides: the timeline says where the
+	// reply came from, the thread says where else it went.
+	InThread bool
 }
 
 // TimelineView is a rendered, scrollable block of lines plus the anchors the
@@ -135,8 +140,14 @@ func Timeline(theme Theme, state TimelineState) TimelineView {
 			continue
 		}
 
+		// A thread reply whose author ticked "also send to channel" lands here in
+		// the timeline, stripped of the conversation it belongs to. It gets its own
+		// header and a line naming the thread, so it does not read as a reply to
+		// whatever happens to sit above it.
+		mirrored := !state.InThread && msg.IsThreadReply() && msg.ShowInParent
+
 		// Group consecutive messages from one author into a single header.
-		grouped := havePrevious &&
+		grouped := havePrevious && !mirrored &&
 			previous.Username == msg.Username &&
 			!previous.IsSystem() &&
 			msg.At.Sub(previous.At) < groupWindow
@@ -144,6 +155,11 @@ func Timeline(theme Theme, state TimelineState) TimelineView {
 			if havePrevious {
 				view.Lines = append(view.Lines, "")
 				view.MessageLine[index] = len(view.Lines)
+			}
+			if mirrored {
+				// Clicking it opens the thread, the same as the reply-count hint.
+				view.HintLine[len(view.Lines)] = index
+				emit(theme.ThreadHint.Render(Truncate(mirrorHint(state.Messages, msg), contentWidth)))
 			}
 			emit(authorLine(theme, msg, contentWidth))
 		}
@@ -159,6 +175,11 @@ func Timeline(theme Theme, state TimelineState) TimelineView {
 			view.ReactionLine[len(view.Lines)] = index
 			view.ReactionSpans[len(view.Lines)] = spans
 			emit(rendered)
+		}
+		// The mirror is worth saying inside the thread too: whoever is reading it
+		// should know which replies the whole room saw.
+		if state.InThread && msg.IsThreadReply() && msg.ShowInParent {
+			emit(theme.ThreadHint.Render(Truncate("↱ also sent to the channel", contentWidth)))
 		}
 		if msg.IsThreadParent() {
 			view.HintLine[len(view.Lines)] = index
@@ -188,6 +209,34 @@ func authorLine(theme Theme, msg model.Message, width int) string {
 
 	nameWidth := max(1, width-Width(stamp)-1)
 	return style.Render(Truncate(author, nameWidth)) + " " + theme.Time.Render(stamp)
+}
+
+// mirrorHint labels a thread reply that was also sent to the channel, naming the
+// thread it came from when its parent is on screen.
+//
+// The parent usually is — a thread starts from a message in the room — but it
+// can have scrolled out of the loaded page, so the label degrades to saying only
+// that the reply belongs somewhere else.
+func mirrorHint(messages []model.Message, msg model.Message) string {
+	for _, candidate := range messages {
+		if candidate.ID != msg.ThreadID {
+			continue
+		}
+		if preview := previewText(candidate); preview != "" {
+			return "↱ in thread: " + preview
+		}
+		break
+	}
+	return "↱ in a thread"
+}
+
+// previewText is a message reduced to one line, for hints and lists.
+func previewText(msg model.Message) string {
+	text := msg.Text
+	if text == "" && msg.IsSystem() {
+		text = msg.SystemText()
+	}
+	return emoji.Replace(strings.ReplaceAll(text, "\n", " "))
 }
 
 func threadHint(msg model.Message) string {
@@ -290,6 +339,7 @@ func Thread(theme Theme, state ThreadState) TimelineView {
 		Messages: []model.Message{state.Parent},
 		Width:    state.Width,
 		Cursor:   -1,
+		InThread: true,
 	})
 
 	view := TimelineView{
@@ -311,6 +361,7 @@ func Thread(theme Theme, state ThreadState) TimelineView {
 		Width:    state.Width,
 		Cursor:   state.Cursor,
 		Empty:    "No replies yet — type to reply in this thread.",
+		InThread: true,
 	})
 	offset := len(view.Lines)
 	view.Lines = append(view.Lines, body.Lines...)
@@ -354,11 +405,7 @@ func ThreadList(theme Theme, state ThreadListState) []string {
 		head := theme.Author.Render(Truncate(author, headWidth))
 		lines = append(lines, gutter+head+" "+theme.Faint.Render(meta))
 
-		preview := emoji.Replace(strings.ReplaceAll(thread.Text, "\n", " "))
-		if preview == "" && thread.IsSystem() {
-			preview = emoji.Replace(thread.SystemText())
-		}
-		lines = append(lines, gutter+theme.Muted.Render(Truncate(preview, width)))
+		lines = append(lines, gutter+theme.Muted.Render(Truncate(previewText(thread), width)))
 	}
 	return lines
 }

@@ -47,6 +47,11 @@ func press(s string) tea.KeyMsg {
 	}
 }
 
+// altPress is a meta-modified letter, e.g. alt+c.
+func altPress(s string) tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s), Alt: true}
+}
+
 func event(m chatModel, e app.Event) chatModel {
 	m, _ = m.Update(coreEventMsg{event: e})
 	return m
@@ -325,6 +330,58 @@ func TestChatEnterOnMessageOpensThread(t *testing.T) {
 	m, _ = m.Update(press("esc"))
 	if m.mode != bodyTimeline || m.threadID != "" {
 		t.Errorf("esc did not close the thread (mode=%v, id=%q)", m.mode, m.threadID)
+	}
+}
+
+// alt+c is the "also send to channel" checkbox: it only means anything inside a
+// thread, and it belongs to the thread that is open, not to the room.
+func TestChatAltCTogglesSendingToTheChannel(t *testing.T) {
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID: "r1",
+		Messages: []model.Message{
+			{ID: "parent", Username: "alice", Author: "Alice", Text: "let's discuss",
+				At: time.Now().Add(-time.Minute), ThreadCount: 2},
+		},
+	})
+
+	// Outside a thread there is nothing to mirror.
+	m, _ = m.Update(altPress("c"))
+	if m.alsoToChannel {
+		t.Error("alt+c toggled in the timeline, where every message is already in the channel")
+	}
+
+	m.focus = focusMessages
+	m, _ = m.Update(press("k"))
+	m, _ = m.Update(press("enter"))
+	m = event(m, app.ThreadUpdated{
+		RoomID:   "r1",
+		ThreadID: "parent",
+		Parent: model.Message{ID: "parent", Username: "alice", Author: "Alice",
+			Text: "let's discuss", At: time.Now()},
+	})
+
+	if !strings.Contains(m.View(), "[ ] also to channel") {
+		t.Errorf("thread composer does not offer the toggle:\n%s", m.View())
+	}
+	m, _ = m.Update(altPress("c"))
+	if !m.alsoToChannel {
+		t.Fatal("alt+c did not turn the toggle on")
+	}
+	if !strings.Contains(m.View(), "[✓] also to channel") {
+		t.Errorf("composer does not show the toggle as on:\n%s", m.View())
+	}
+	m, _ = m.Update(altPress("c"))
+	if m.alsoToChannel {
+		t.Error("alt+c did not turn the toggle back off")
+	}
+
+	// Leaving the thread leaves the toggle behind with it.
+	m, _ = m.Update(altPress("c"))
+	m, _ = m.Update(press("esc"))
+	if m.alsoToChannel {
+		t.Error("the toggle survived closing the thread")
 	}
 }
 

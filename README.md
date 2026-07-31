@@ -88,6 +88,7 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `enter` | Rooms: open · Messages: open or start a thread · Composer: send |
 | `↑` (empty composer) | Edit your last message; again for the one before, `↓` forward |
 | `ctrl+t` | Thread list for this room — works while typing |
+| `alt+c` | In a thread: also send your reply to the channel |
 | `r` | React to the selected message |
 | `@` / `#` | Autocomplete a person or a channel while typing |
 | `/` (empty composer) | List the slash commands this server offers |
@@ -307,6 +308,16 @@ Any message can anchor one, whether or not it already has replies:
 
 `ctrl+t` lists every thread in the room, from any focus. `esc` goes back to the
 timeline.
+
+`alt+c` ticks "also to channel" on the composer banner, the same checkbox the web
+client has: the reply lands in the thread and in the room. It stays ticked while
+the thread is open, so reporting a run of updates back to the room takes one
+keypress rather than one per message.
+
+A reply someone else mirrored that way is drawn in the timeline under a `↱ in
+thread: …` line naming the thread it came from, since it arrives without the
+conversation it belongs to. Clicking that line opens the thread. Inside the
+thread the same reply is marked `↱ also sent to the channel`.
 
 ### Editing what you sent
 

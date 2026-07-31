@@ -95,11 +95,11 @@ func TestSendUploadsFilesInOrderWithTextOnTheFirst(t *testing.T) {
 	h.waitForRoomInSidebar("room-1")
 
 	dir := t.TempDir()
-	h.core.Send("room-1", "", "look at these",
+	h.core.Send(app.SendRequest{RoomID: "room-1", Text: "look at these", Uploads: []app.Upload{
 		queuedFile(t, dir, "one.png", fakerc.FilePNG),
 		queuedFile(t, dir, "two.txt", []byte("words")),
 		queuedFile(t, dir, "three.png", fakerc.FilePNG),
-	)
+	}})
 
 	uploads := waitFor(t, "three uploads", func() ([]fakerc.Upload, bool) {
 		got := h.server.Uploads()
@@ -128,8 +128,12 @@ func TestSendUploadsIntoAThread(t *testing.T) {
 	h.start()
 	h.waitForRoomInSidebar("room-1")
 
-	h.core.Send("room-1", "thread-1", "in the thread",
-		queuedFile(t, t.TempDir(), "reply.png", fakerc.FilePNG))
+	h.core.Send(app.SendRequest{
+		RoomID:   "room-1",
+		ThreadID: "thread-1",
+		Text:     "in the thread",
+		Uploads:  []app.Upload{queuedFile(t, t.TempDir(), "reply.png", fakerc.FilePNG)},
+	})
 
 	uploads := waitFor(t, "the upload", func() ([]fakerc.Upload, bool) {
 		got := h.server.Uploads()
@@ -149,8 +153,11 @@ func TestSendKeepsTheMessageWhenEveryUploadIsRefused(t *testing.T) {
 	h.waitForRoomInSidebar("room-1")
 	h.server.RejectUpload = true
 
-	h.core.Send("room-1", "", "here is the thing",
-		queuedFile(t, t.TempDir(), "banned.exe", []byte("MZ")))
+	h.core.Send(app.SendRequest{
+		RoomID:  "room-1",
+		Text:    "here is the thing",
+		Uploads: []app.Upload{queuedFile(t, t.TempDir(), "banned.exe", []byte("MZ"))},
+	})
 
 	sent := waitFor(t, "the message posted anyway", func() ([]fakerc.SentMessage, bool) {
 		got := h.server.SentMessages()
@@ -193,7 +200,11 @@ func TestSendContinuesPastAFailedFile(t *testing.T) {
 	}
 	alsoGood := queuedFile(t, dir, "also-good.png", fakerc.FilePNG)
 
-	h.core.Send("room-1", "", "three of them", gone, good, alsoGood)
+	h.core.Send(app.SendRequest{
+		RoomID:  "room-1",
+		Text:    "three of them",
+		Uploads: []app.Upload{gone, good, alsoGood},
+	})
 
 	uploads := waitFor(t, "the two surviving uploads", func() ([]fakerc.Upload, bool) {
 		got := h.server.Uploads()
@@ -220,8 +231,11 @@ func TestSendFallsBackToTheLegacyUploadRoute(t *testing.T) {
 	h.waitForRoomInSidebar("room-1")
 	h.server.NoMediaRoute = true
 
-	h.core.Send("room-1", "", "old server",
-		queuedFile(t, t.TempDir(), "shot.png", fakerc.FilePNG))
+	h.core.Send(app.SendRequest{
+		RoomID:  "room-1",
+		Text:    "old server",
+		Uploads: []app.Upload{queuedFile(t, t.TempDir(), "shot.png", fakerc.FilePNG)},
+	})
 
 	uploads := waitFor(t, "the upload", func() ([]fakerc.Upload, bool) {
 		got := h.server.Uploads()
@@ -244,8 +258,11 @@ func TestUploadedFileAppearsInTheTimeline(t *testing.T) {
 	h.waitForRoomInSidebar("room-1")
 	h.core.OpenRoom("room-1")
 
-	h.core.Send("room-1", "", "shipped",
-		queuedFile(t, t.TempDir(), "shot.png", fakerc.FilePNG))
+	h.core.Send(app.SendRequest{
+		RoomID:  "room-1",
+		Text:    "shipped",
+		Uploads: []app.Upload{queuedFile(t, t.TempDir(), "shot.png", fakerc.FilePNG)},
+	})
 
 	waitFor(t, "the upload in the timeline", func() (bool, bool) {
 		timeline, ok := h.lastTimeline("room-1")

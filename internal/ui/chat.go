@@ -71,6 +71,11 @@ type chatModel struct {
 	threadParent  model.Message
 	threadReplies []model.Message
 	threadCursor  int
+	// alsoToChannel mirrors what is sent in this thread into the room timeline.
+	// It sticks for as long as the thread is open — someone reporting back to the
+	// room usually does it for a run of messages, not one — and the composer
+	// banner says so the whole time.
+	alsoToChannel bool
 
 	// thread index
 	threads      []model.Message
@@ -460,13 +465,14 @@ func (m chatModel) View() string {
 	}
 
 	composer := render.Composer(m.theme, render.ComposerState{
-		Width:       m.width,
-		View:        m.composer.View(),
-		Prompt:      m.composerPrompt(),
-		ReplyingTo:  m.threadContext(),
-		Editing:     m.editing(),
-		ReadOnly:    m.room.ReadOnly,
-		Attachments: m.uploadLabels(),
+		Width:         m.width,
+		View:          m.composer.View(),
+		Prompt:        m.composerPrompt(),
+		ReplyingTo:    m.threadContext(),
+		AlsoToChannel: m.alsoToChannel,
+		Editing:       m.editing(),
+		ReadOnly:      m.room.ReadOnly,
+		Attachments:   m.uploadLabels(),
 	})
 
 	return render.Chat(m.theme, render.Frame{

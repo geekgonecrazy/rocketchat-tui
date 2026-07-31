@@ -555,27 +555,45 @@ func (c *Core) Edit(roomID, messageID, text string) {
 	})
 }
 
+// SendRequest is one outgoing message: what to say, where, and how.
+type SendRequest struct {
+	RoomID   string
+	ThreadID string
+	Text     string
+	// AlsoSendToChannel mirrors a thread reply into the room timeline, the same
+	// as the web client's "also send to channel" checkbox. It is meaningless
+	// without a ThreadID and is ignored there.
+	AlsoSendToChannel bool
+	// Uploads are the files queued for this message, in the order they were
+	// attached.
+	Uploads []Upload
+}
+
 // Send posts a message to a room, optionally into a thread.
 //
 // Uploads, if any, are what the composer had queued. Rocket.Chat has no notion
 // of a message with files bolted on: each file is its own message, and the text
 // rides on one of them. So a send with files is a run of uploads rather than a
 // single call, and text with no files is the plain path below.
-func (c *Core) Send(roomID, threadID, text string, uploads ...Upload) {
+func (c *Core) Send(req SendRequest) {
 	c.enqueue(func(c *Core) {
-		if roomID == "" || (text == "" && len(uploads) == 0) {
+		if req.RoomID == "" || (req.Text == "" && len(req.Uploads) == 0) {
 			return
 		}
-		c.stopTyping(roomID)
+		if req.ThreadID == "" {
+			// A message that is already in the timeline cannot be mirrored into it.
+			req.AlsoSendToChannel = false
+		}
+		c.stopTyping(req.RoomID)
 
 		c.background(func(ctx context.Context) error {
-			if len(uploads) > 0 {
-				return c.sendUploads(ctx, roomID, threadID, text, uploads)
+			if len(req.Uploads) > 0 {
+				return c.sendUploads(ctx, req)
 			}
-			if err := c.sendText(ctx, roomID, threadID, text); err != nil {
+			if err := c.sendText(ctx, req.RoomID, req.ThreadID, req.Text, req.AlsoSendToChannel); err != nil {
 				return err
 			}
-			c.enqueue(func(c *Core) { c.refreshAfterSend(roomID, threadID) })
+			c.enqueue(func(c *Core) { c.refreshAfterSend(req.RoomID, req.ThreadID) })
 			return nil
 		})
 	})
@@ -586,11 +604,12 @@ func (c *Core) Send(roomID, threadID, text string, uploads ...Upload) {
 //
 // It runs off the loop, like every other network call, and leaves publishing to
 // its caller: what needs re-rendering depends on why the message was sent.
-func (c *Core) sendText(ctx context.Context, roomID, threadID, text string) error {
+func (c *Core) sendText(ctx context.Context, roomID, threadID, text string, alsoSendToChannel bool) error {
 	sent, err := c.client.Send(ctx, rocket.SendOptions{
-		RoomID:   roomID,
-		Text:     text,
-		ThreadID: threadID,
+		RoomID:            roomID,
+		Text:              text,
+		ThreadID:          threadID,
+		AlsoSendToChannel: alsoSendToChannel,
 	})
 	if err != nil {
 		return err

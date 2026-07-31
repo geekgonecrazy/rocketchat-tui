@@ -90,12 +90,14 @@ func ExpandPath(path string) (string, error) {
 // Files go out one at a time and in order, because they are one message each
 // and the room should show them in the order they were attached. Uploading them
 // concurrently would be faster and would scramble that.
-func (c *Core) sendUploads(ctx context.Context, roomID, threadID, text string, uploads []Upload) error {
+func (c *Core) sendUploads(ctx context.Context, req SendRequest) error {
+	roomID, threadID := req.RoomID, req.ThreadID
+
 	// pending is the message text, still looking for a file to ride on. It is
 	// cleared by the first upload that *succeeds* rather than simply the first
 	// one attempted: a rejected first file must not take the user's words with
 	// it.
-	pending := text
+	pending := req.Text
 
 	var (
 		failed   []string
@@ -103,14 +105,18 @@ func (c *Core) sendUploads(ctx context.Context, roomID, threadID, text string, u
 		resync   bool
 	)
 
-	for _, upload := range uploads {
+	for _, upload := range req.Uploads {
+		// Every file of a mirrored reply is mirrored: they are one message each,
+		// and showing the room half of what was attached would be stranger than
+		// showing it all or none.
 		sent, err := c.client.Upload(ctx, rocket.UploadOptions{
-			RoomID:   roomID,
-			Path:     upload.Path,
-			Filename: upload.Name,
-			MIME:     upload.MIME,
-			Text:     pending,
-			ThreadID: threadID,
+			RoomID:            roomID,
+			Path:              upload.Path,
+			Filename:          upload.Name,
+			MIME:              upload.MIME,
+			Text:              pending,
+			ThreadID:          threadID,
+			AlsoSendToChannel: req.AlsoSendToChannel,
 		})
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -143,9 +149,10 @@ func (c *Core) sendUploads(ctx context.Context, roomID, threadID, text string, u
 		// something the user wrote and watched disappear from the composer. The
 		// failure notice below says which files did not make it.
 		if _, err := c.client.Send(ctx, rocket.SendOptions{
-			RoomID:   roomID,
-			Text:     pending,
-			ThreadID: threadID,
+			RoomID:            roomID,
+			Text:              pending,
+			ThreadID:          threadID,
+			AlsoSendToChannel: req.AlsoSendToChannel,
 		}); err != nil {
 			c.logger.Warn("post message after failed uploads", "err", err)
 		} else {

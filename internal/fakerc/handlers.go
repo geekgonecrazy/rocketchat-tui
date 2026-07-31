@@ -256,9 +256,10 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Message struct {
-			RoomID   string `json:"rid"`
-			Text     string `json:"msg"`
-			ThreadID string `json:"tmid"`
+			RoomID       string `json:"rid"`
+			Text         string `json:"msg"`
+			ThreadID     string `json:"tmid"`
+			ShowInParent bool   `json:"tshow"`
 		} `json:"message"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -270,13 +271,19 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	s.nextID++
 	id := "sent-" + strconv.Itoa(s.nextID)
 	s.sent = append(s.sent, SentMessage{
-		RoomID:   body.Message.RoomID,
-		Text:     body.Message.Text,
-		ThreadID: body.Message.ThreadID,
+		RoomID:            body.Message.RoomID,
+		Text:              body.Message.Text,
+		ThreadID:          body.Message.ThreadID,
+		AlsoSendToChannel: body.Message.ShowInParent,
 	})
 	extra := map[string]any{}
 	if body.Message.ThreadID != "" {
 		extra["tmid"] = body.Message.ThreadID
+		// A real server echoes the flag back on the stored reply, which is what
+		// makes it show up in the room timeline as well as the thread.
+		if body.Message.ShowInParent {
+			extra["tshow"] = true
+		}
 	}
 	msg := s.buildMessage(id, body.Message.RoomID, Username, body.Message.Text, time.Now(), extra)
 	msg["u"] = map[string]any{"_id": UserID, "username": Username, "name": "Test Tester"}
@@ -581,8 +588,9 @@ func (s *Server) handleRoomsMediaConfirm(w http.ResponseWriter, r *http.Request)
 	roomID, fileID := parts[0], parts[1]
 
 	var body struct {
-		Text     string `json:"msg"`
-		ThreadID string `json:"tmid"`
+		Text         string `json:"msg"`
+		ThreadID     string `json:"tmid"`
+		ShowInParent bool   `json:"tshow"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
@@ -597,6 +605,7 @@ func (s *Server) handleRoomsMediaConfirm(w http.ResponseWriter, r *http.Request)
 	}
 	delete(s.pendingMedia, fileID)
 	upload.Text, upload.ThreadID = body.Text, body.ThreadID
+	upload.AlsoSendToChannel = body.ShowInParent
 	msg := s.recordUpload(roomID, fileID, upload)
 	s.mu.Unlock()
 
@@ -620,6 +629,7 @@ func (s *Server) handleRoomsUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	upload.Text = r.FormValue("msg")
 	upload.ThreadID = r.FormValue("tmid")
+	upload.AlsoSendToChannel = r.FormValue("tshow") == "true"
 
 	s.mu.Lock()
 	s.nextID++
@@ -680,6 +690,9 @@ func (s *Server) recordUpload(roomID, fileID string, upload Upload) map[string]a
 	}
 	if upload.ThreadID != "" {
 		extra["tmid"] = upload.ThreadID
+		if upload.AlsoSendToChannel {
+			extra["tshow"] = true
+		}
 	}
 
 	msg := s.buildMessage("sent-"+strconv.Itoa(s.nextID), roomID, Username, upload.Text, time.Now(), extra)

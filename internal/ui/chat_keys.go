@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/geekgonecrazy/rocketchat-tui/internal/app"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/model"
 )
 
@@ -119,6 +120,14 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		// plain letter could never reach the thread list — it would just be typed.
 		if m.activeRoom != "" {
 			return m.toggleThreadList()
+		}
+		return m, nil
+	case "alt+c":
+		// Alt rather than ctrl for the same reason ctrl+o is the attach key: the
+		// textarea owns most ctrl letters, and the ones left are worse mnemonics
+		// than "c for channel".
+		if m.mode == bodyThread {
+			m.alsoToChannel = !m.alsoToChannel
 		}
 		return m, nil
 	case "ctrl+o":
@@ -423,7 +432,13 @@ func (m chatModel) send() (chatModel, tea.Cmd) {
 		threadID = m.threadID
 	}
 
-	m.core.Send(m.activeRoom, threadID, text, m.uploads...)
+	m.core.Send(app.SendRequest{
+		RoomID:            m.activeRoom,
+		ThreadID:          threadID,
+		Text:              text,
+		AlsoSendToChannel: threadID != "" && m.alsoToChannel,
+		Uploads:           m.uploads,
+	})
 	m.uploads = nil
 	m.composer.Reset()
 	m.composer.SetHeight(1)
@@ -453,6 +468,7 @@ func (m chatModel) showTimeline() (chatModel, tea.Cmd) {
 	m = m.abandonEdit()
 	m.mode = bodyTimeline
 	m.threadID = ""
+	m.alsoToChannel = false
 	m.core.CloseThread()
 	m.scroll = 0
 	m.pinnedToBottom = true
@@ -484,6 +500,8 @@ func (m chatModel) openSelectedThread() (chatModel, tea.Cmd) {
 	}
 
 	m = m.abandonEdit()
+	// The toggle belongs to the thread being left, not the one being opened.
+	m.alsoToChannel = m.threadID == threadID && m.alsoToChannel
 	m.threadID = threadID
 	m.mode = bodyThread
 	m.threadCursor = -1

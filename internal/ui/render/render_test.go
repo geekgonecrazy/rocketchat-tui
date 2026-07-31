@@ -211,6 +211,69 @@ func TestTimelineShowsThreadAndReactionAffordances(t *testing.T) {
 	}
 }
 
+// A reply that was also sent to the channel arrives in the timeline without the
+// conversation it belongs to, so the timeline has to say where it came from.
+func TestTimelineMarksRepliesMirroredIntoTheChannel(t *testing.T) {
+	messages := []model.Message{
+		{ID: "parent", Username: "alice", Author: "Alice", Text: "ship it?",
+			At: time.Now().Add(-time.Hour), ThreadCount: 1},
+		{ID: "reply", Username: "bob", Author: "Bob", Text: "shipped",
+			At: time.Now(), ThreadID: "parent", ShowInParent: true},
+	}
+	view := Timeline(plainTheme(), TimelineState{Messages: messages, Width: 60, Cursor: -1})
+
+	rendered := strings.Join(view.Lines, "\n")
+	if !strings.Contains(rendered, "↱ in thread: ship it?") {
+		t.Errorf("mirrored reply not labelled with its thread:\n%s", rendered)
+	}
+	// The label is a thread affordance like "↳ 3 replies": clicking it opens the
+	// thread the reply came from.
+	found := false
+	for _, index := range view.HintLine {
+		if index == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("mirror label is not clickable: %v", view.HintLine)
+	}
+
+	// Without the parent on screen the label still has to appear, only vaguer.
+	orphan := Timeline(plainTheme(), TimelineState{
+		Messages: messages[1:], Width: 60, Cursor: -1,
+	})
+	if !strings.Contains(strings.Join(orphan.Lines, "\n"), "↱ in a thread") {
+		t.Errorf("mirrored reply with no parent loaded is unlabelled:\n%s", orphan.Lines)
+	}
+}
+
+// The same reply seen from inside the thread: there, what is worth saying is
+// that the whole room saw it.
+func TestThreadMarksRepliesMirroredIntoTheChannel(t *testing.T) {
+	view := Thread(plainTheme(), ThreadState{
+		Parent: model.Message{ID: "parent", Username: "alice", Author: "Alice",
+			Text: "ship it?", At: time.Now().Add(-time.Hour)},
+		Replies: []model.Message{
+			{ID: "quiet", Username: "bob", Author: "Bob", Text: "checking",
+				At: time.Now(), ThreadID: "parent"},
+			{ID: "loud", Username: "bob", Author: "Bob", Text: "shipped",
+				At: time.Now(), ThreadID: "parent", ShowInParent: true},
+		},
+		Width:  60,
+		Cursor: -1,
+	})
+
+	rendered := strings.Join(view.Lines, "\n")
+	if count := strings.Count(rendered, "↱ also sent to the channel"); count != 1 {
+		t.Errorf("want one mirror note, got %d:\n%s", count, rendered)
+	}
+	// The thread pane must not repeat the timeline's "in thread:" label — every
+	// message here is in the thread.
+	if strings.Contains(rendered, "↱ in thread") {
+		t.Errorf("thread pane labelled its own replies:\n%s", rendered)
+	}
+}
+
 func TestTimelineRendersSystemMessages(t *testing.T) {
 	view := Timeline(plainTheme(), TimelineState{
 		Messages: []model.Message{
@@ -574,6 +637,45 @@ func TestReactionCountAndOwnership(t *testing.T) {
 	}
 	if reaction.Mine {
 		t.Error("Mine should default to false")
+	}
+}
+
+func TestComposerThreadBannerShowsTheMirrorToggle(t *testing.T) {
+	state := ComposerState{Width: 60, View: "shipped", ReplyingTo: "Alice: ship it?"}
+
+	off := strings.Join(Composer(plainTheme(), state), "\n")
+	if !strings.Contains(off, "[ ] also to channel (alt+c)") {
+		t.Errorf("banner does not offer the toggle:\n%s", off)
+	}
+
+	state.AlsoToChannel = true
+	on := strings.Join(Composer(plainTheme(), state), "\n")
+	if !strings.Contains(on, "[✓] also to channel (alt+c)") {
+		t.Errorf("banner does not show the toggle as on:\n%s", on)
+	}
+	if strings.Count(off, "\n") != strings.Count(on, "\n") {
+		t.Error("the toggle changed the composer's height")
+	}
+}
+
+// The parent preview is what gets squeezed: losing it costs a reminder of which
+// thread this is, losing the checkbox hides that the room is about to see it.
+func TestComposerThreadBannerKeepsTheToggleWhenNarrow(t *testing.T) {
+	lines := Composer(plainTheme(), ComposerState{
+		Width:         44,
+		View:          "shipped",
+		ReplyingTo:    strings.Repeat("a very long parent message ", 5),
+		AlsoToChannel: true,
+	})
+
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "[✓] also to channel") {
+		t.Errorf("toggle truncated away:\n%s", joined)
+	}
+	for _, line := range lines {
+		if Width(line) > 44 {
+			t.Errorf("line is %d cells wide, want <= 44: %q", Width(line), line)
+		}
 	}
 }
 

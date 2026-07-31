@@ -36,6 +36,9 @@ type SentMessage struct {
 	RoomID   string
 	Text     string
 	ThreadID string
+	// AlsoSendToChannel is the "tshow" flag: a thread reply the sender also
+	// wanted in the room timeline.
+	AlsoSendToChannel bool
 }
 
 // EditedMessage is a chat.update call the client made.
@@ -66,6 +69,8 @@ type Upload struct {
 	Bytes    []byte
 	Text     string
 	ThreadID string
+	// AlsoSendToChannel is the "tshow" flag the client sent with the file.
+	AlsoSendToChannel bool
 }
 
 // wsConn serializes writes to one websocket. gorilla panics on concurrent
