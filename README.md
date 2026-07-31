@@ -54,6 +54,8 @@ atomic change -a <hash>     # AI attestation: vendor, model, tokens, cost
   `/invite` down to `/exit`
 - Send files: `ctrl+o` gives you a path prompt with tab-completion, attach as
   many as you like, and nothing uploads until you send the message
+- Write long messages in your own editor: `ctrl+g` hands the draft to `$EDITOR`
+  and takes back whatever you save
 - Desktop notifications and a sound when someone DMs you, mentions you, or
   replies in a thread you follow — with a settings pane to turn either off
 - Works offline against the local cache; reconnects and resyncs automatically
@@ -101,7 +103,8 @@ Flags:
 | `-logout` | Forget saved credentials and exit |
 
 Config lives at `$XDG_CONFIG_HOME/rctui/config.json` (mode 0600, it holds an
-auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
+auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`, and the editor
+draft at `$XDG_DATA_HOME/rctui/compose.md`.
 
 ## Keys
 
@@ -127,6 +130,7 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `o` | Open the selected message's attachment in a desktop app |
 | `ctrl+o` | Attach a file to send with your message |
 | `ctrl+x` | Remove the last file you attached |
+| `ctrl+g` | Write your message in `$EDITOR` |
 | `esc` | Close thread / clear filter / leave the composer |
 | `ctrl+r` | Resync now |
 | `ctrl+l` | Mark the current room read |
@@ -279,6 +283,47 @@ its real media type, worked out from the extension and confirmed against the
 first few hundred bytes when there is no extension to go on. That last part
 matters more than it sounds: an image uploaded as `application/octet-stream` is
 an image no client will ever draw inline.
+
+### Composing in an editor
+
+The composer is four lines at its tallest, which is fine for a sentence and no
+way to write a handover note. `ctrl+g` writes what you have so far to a file,
+opens it in your editor, and replaces the composer with whatever you saved.
+
+The editor is `editor` from the config file, else `$VISUAL`, else `$EDITOR`:
+
+```json
+{ "editor": "hx" }
+```
+
+It is run through `sh`, so flags and quoting work as they do in your shell —
+`code --wait`, `emacsclient -c -a ''` — and the file arrives as an argument, so
+a path with a space in it needs no quoting of yours. There is no `vi` fallback:
+if none of the three is set, `ctrl+g` says so and nothing happens, because being
+dropped into a modal editor by a chat client is worse than a message telling you
+what to set.
+
+Two ways to change your mind, both of which need no key of their own:
+
+- Quit without saving. The file still holds the draft you came in with, so the
+  composer gets its own text back.
+- Save, then think again: exit non-zero — `:cq` in vim — and the composer is
+  left exactly as it was, saved file or not.
+
+Because there are two ways out, saving an *empty* file is taken literally: the
+composer is cleared. That is the only way to mean "throw this away" by saving.
+
+The draft lives at `$XDG_DATA_HOME/rctui/compose.md`, mode 0600, rewritten each
+time you press `ctrl+g` and never deleted. It is the recovery copy: if anything
+goes wrong between your editor exiting and the composer filling — a crash, a
+disconnect, a closed laptop — the message is still on disk. Two rctui windows
+share the file, so the last save wins.
+
+`ctrl+g` works wherever the composer takes text: in a thread, in a read-only
+room, and while editing a message you already sent, which is arguably the best
+use of it. Windows-style line endings become newlines and the trailing newline
+your editor adds is dropped, but indentation, blank lines and code fences come
+through as written.
 
 ### Slash commands
 
