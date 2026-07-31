@@ -54,6 +54,8 @@ atomic change -a <hash>     # AI attestation: vendor, model, tokens, cost
   `/invite` down to `/exit`
 - Send files: `ctrl+o` gives you a path prompt with tab-completion, attach as
   many as you like, and nothing uploads until you send the message
+- Desktop notifications and a sound when someone DMs you, mentions you, or
+  replies in a thread you follow — with a settings pane to turn either off
 - Works offline against the local cache; reconnects and resyncs automatically
 
 ## Install
@@ -128,6 +130,7 @@ auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
 | `esc` | Close thread / clear filter / leave the composer |
 | `ctrl+r` | Resync now |
 | `ctrl+l` | Mark the current room read |
+| `,` | Settings: desktop notifications and sound (`/settings` from the composer) |
 | `?` | Toggle help |
 | `ctrl+c` | Quit |
 
@@ -360,6 +363,53 @@ or time-limited — so nothing changes on screen until the server accepts it, an
 a refusal is shown in the status bar. Clearing the box and pressing `enter` is
 refused rather than treated as a delete.
 
+### Notifications
+
+A terminal client spends most of its life behind another window, so a bold room
+in the sidebar is not a notification — it is something you find later. Three
+things reach you when you are not looking:
+
+- a direct message,
+- an `@you`, `@all` or `@here` in a room,
+- a reply in a thread you follow.
+
+Ordinary channel traffic never notifies, and neither does your own message
+coming back from the server, a join/leave line, or an edit of something that has
+already notified once. The room being open on screen makes no difference — having
+a room in front of you is not evidence anyone is looking at it.
+
+Press `,` (or `/settings` from the composer) for the pane:
+
+```
+› Desktop notifications  [✓] on
+                         when someone DMs you, mentions you, or replies in a…
+  Notification sound     [✓] on
+                         terminal bell
+```
+
+`↑↓` moves, `enter` or `space` toggles, `esc` closes, and each toggle is written
+to the config as you make it. Both default to on.
+
+The desktop notification goes through `notify-send` on Linux and
+`terminal-notifier` or `osascript` on macOS. Over SSH none of those exist — the
+desktop is at the other end of the connection — so it falls back to an OSC 777
+escape sequence and lets the terminal raise the notification itself. kitty,
+WezTerm, foot and iTerm2 all understand it; terminals that do not ignore it
+silently, which is the one case where nothing can be reported back.
+
+The sound is the terminal bell, so whatever you have already told your terminal
+to do about alerts is what happens — including turning it into something visual,
+or into nothing. To play a file instead, point `sound_command` at a player:
+
+```json
+{ "notifications": { "sound_command": "paplay ~/sounds/ping.wav" } }
+```
+
+It is run with `sh -c`, so `~`, quoting and pipes work as they do in your shell.
+
+A room you muted in the web client will still notify here: mute lives on the
+subscription and rctui does not sync that field yet.
+
 ## Architecture
 
 ```
@@ -368,6 +418,7 @@ internal/rocket/        the mini SDK: REST + DDP, no other internal deps
 internal/emoji/         shortcode ↔ glyph table, generated from gemoji
 internal/model/         view-facing domain types (Room, Message, Kind)
 internal/store/         SQLite cache: rooms, subscriptions, messages, members, paging state
+internal/notify/        desktop notifications and sound, with fallbacks that survive SSH
 internal/app/           headless core: owns SDK + cache + all state, emits events
 internal/ui/            Bubbletea models: input handling and widget state
 internal/ui/render/     pure functions: view state → strings, no Bubbletea

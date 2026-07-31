@@ -31,6 +31,7 @@ var clientCommands = []model.Command{
 	{Name: "upload", Params: "[path]", Description: "attach a file to this message", Scope: model.ScopeClient},
 	{Name: "open", Params: "<room>", Description: "jump to a room in the sidebar", Scope: model.ScopeClient},
 	{Name: "help", Description: "show the key reference", Scope: model.ScopeClient},
+	{Name: "settings", Description: "notification settings", Scope: model.ScopeClient},
 }
 
 // ClientCommands is the set the UI implements itself.

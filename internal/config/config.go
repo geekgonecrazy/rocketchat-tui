@@ -27,8 +27,40 @@ type Config struct {
 	// resolved by Downloads.
 	DownloadDir string `json:"download_dir,omitempty"`
 
+	// Notifications controls what happens when someone addresses you.
+	Notifications Notifications `json:"notifications"`
+
 	path string `json:"-"`
 }
+
+// Notifications is the user's answer to "tell me when someone needs me".
+//
+// The two switches are pointers so that absent and false are different things.
+// Both default to on, and a config file written before this existed — or by
+// hand, without them — has to mean "on" rather than "the user turned these off",
+// which is what a plain bool would silently have said.
+type Notifications struct {
+	// Desktop raises a system notification. Defaults to on.
+	Desktop *bool `json:"desktop,omitempty"`
+	// Sound rings the terminal bell, or runs SoundCommand. Defaults to on.
+	Sound *bool `json:"sound,omitempty"`
+
+	// SoundCommand replaces the bell with a shell command, e.g.
+	// "paplay ~/sounds/ping.wav". Empty means the bell.
+	SoundCommand string `json:"sound_command,omitempty"`
+}
+
+// DesktopEnabled reports whether desktop notifications are on.
+func (n Notifications) DesktopEnabled() bool { return n.Desktop == nil || *n.Desktop }
+
+// SoundEnabled reports whether notifications make a sound.
+func (n Notifications) SoundEnabled() bool { return n.Sound == nil || *n.Sound }
+
+// SetDesktop turns desktop notifications on or off.
+func (n *Notifications) SetDesktop(on bool) { n.Desktop = &on }
+
+// SetSound turns the notification sound on or off.
+func (n *Notifications) SetSound(on bool) { n.Sound = &on }
 
 // Downloads is where saved attachments go: whatever the user configured, else
 // ~/Downloads if the platform made one, else the home directory. It is only a
@@ -129,6 +161,9 @@ func (c *Config) Save() error {
 	}
 	return nil
 }
+
+// Path is where this config was loaded from, and where Save writes.
+func (c *Config) Path() string { return c.path }
 
 // HasSession reports whether cached credentials are present.
 func (c *Config) HasSession() bool {

@@ -10,7 +10,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/geekgonecrazy/rocketchat-tui/internal/app"
+	"github.com/geekgonecrazy/rocketchat-tui/internal/config"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/model"
+	"github.com/geekgonecrazy/rocketchat-tui/internal/notify"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/rocket"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/termimg"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/ui/render"
@@ -42,6 +44,13 @@ type clearNoticeMsg struct{}
 type chatModel struct {
 	core  *app.Core
 	theme render.Theme
+
+	// cfg is the user's preferences, shared with Root. The settings pane writes
+	// through it, which is why it is a pointer in a model that is otherwise
+	// copied by value.
+	cfg *config.Config
+	// notifier reaches the user when they are not looking at the terminal.
+	notifier *notify.Notifier
 
 	width  int
 	height int
@@ -98,6 +107,7 @@ type chatModel struct {
 	notice    string
 	noticeErr bool
 	showHelp  bool
+	settings  settingsPane
 
 	username    string
 	serverLabel string
@@ -139,7 +149,8 @@ type chatModel struct {
 	attach attachPrompt
 }
 
-func newChatModel(core *app.Core, theme render.Theme, username, serverLabel, downloadDir string) chatModel {
+func newChatModel(core *app.Core, cfg *config.Config, notifier *notify.Notifier,
+	theme render.Theme, username, serverLabel string) chatModel {
 	composer := textarea.New()
 	composer.Placeholder = "Write a message…"
 	composer.Prompt = ""
@@ -150,7 +161,9 @@ func newChatModel(core *app.Core, theme render.Theme, username, serverLabel, dow
 	composer.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
 
 	return chatModel{
-		core: core,
+		core:     core,
+		cfg:      cfg,
+		notifier: notifier,
 		// The client's own commands are known without asking anyone; the core
 		// replaces this with the full registry as soon as it has one.
 		commands:       app.ClientCommands(),
@@ -164,7 +177,7 @@ func newChatModel(core *app.Core, theme render.Theme, username, serverLabel, dow
 		typing:         make(map[string]model.TypingUsers),
 		pinnedToBottom: true,
 		conn:           rocket.Connecting,
-		downloadDir:    downloadDir,
+		downloadDir:    cfg.Downloads(),
 		// Detected once at startup: the terminal cannot change out from under a
 		// running process, and probing on every keypress would be wasted work.
 		imageProtocol: termimg.DetectEnv(),
@@ -385,6 +398,9 @@ func (m chatModel) handleCoreEvent(event app.Event) (chatModel, tea.Cmd) {
 		m.notice, m.noticeErr = e.Text, e.IsErr
 		return m, tea.Tick(6*time.Second, func(time.Time) tea.Msg { return clearNoticeMsg{} })
 
+	case app.Notification:
+		return m, m.deliverNotification(e)
+
 	case app.AttachmentFetched:
 		return m.attachmentFetched(e)
 
@@ -427,7 +443,10 @@ func (m chatModel) View() string {
 	})
 
 	body := render.Window(m.body.Lines, m.scroll, bodyHeight)
-	if m.showHelp {
+	switch {
+	case m.settings.open:
+		body = render.Window(render.SettingsOverlay(m.theme, m.bodyWidth(), m.settingsRows()), 0, bodyHeight)
+	case m.showHelp:
 		body = render.Window(render.HelpOverlay(m.theme, m.bodyWidth()), 0, bodyHeight)
 	}
 
@@ -551,6 +570,8 @@ func (m chatModel) statusBar() string {
 
 	hints := "enter thread · r react · ctrl+t threads · ? help"
 	switch {
+	case m.settings.open:
+		hints = "↑↓ move · enter toggle · esc close"
 	case m.attach.open:
 		hints = "tab complete · enter attach · esc cancel"
 	case m.editing():

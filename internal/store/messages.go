@@ -35,8 +35,9 @@ func (s *Store) identityName() string {
 const upsertMessageSQL = `
 INSERT INTO messages (
 	id, room_id, thread_id, ts, updated_at, edited_at, user_id, username, author,
-	text, system_type, thread_count, thread_last_at, show_in_parent, reactions, attachments
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	text, system_type, thread_count, thread_last_at, show_in_parent, reactions, attachments,
+	thread_followers
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
 	room_id        = excluded.room_id,
 	thread_id      = excluded.thread_id,
@@ -52,7 +53,10 @@ ON CONFLICT(id) DO UPDATE SET
 	thread_last_at = excluded.thread_last_at,
 	show_in_parent = excluded.show_in_parent,
 	reactions      = excluded.reactions,
-	attachments    = excluded.attachments`
+	attachments    = excluded.attachments,
+	-- Overwritten rather than merged, like every other field here: the server's
+	-- latest word is the whole truth, and this is how unfollowing takes effect.
+	thread_followers = excluded.thread_followers`
 
 // SaveMessages upserts messages. Realtime and REST both land here, so the
 // upsert is what makes duplicate delivery harmless.
@@ -86,12 +90,16 @@ func (s *Store) SaveMessages(messages []rocket.Message) error {
 			if err != nil {
 				return err
 			}
+			followers, err := encodeJSON(msg.Replies)
+			if err != nil {
+				return err
+			}
 			_, err = stmt.Exec(
 				msg.ID, msg.RoomID, msg.ThreadParentID, millis(msg.Timestamp.Time),
 				millis(msg.UpdatedAt.Time), millis(editedAt),
 				msg.User.ID, msg.User.Username, firstNonEmpty(msg.User.Name, msg.User.Username),
 				msg.Msg, msg.Type, msg.ThreadCount, millis(threadLastAt),
-				boolToInt(msg.ShowInParent), reactions, attachments,
+				boolToInt(msg.ShowInParent), reactions, attachments, followers,
 			)
 			if err != nil {
 				return fmt.Errorf("store: save message %s: %w", msg.ID, err)
@@ -204,6 +212,41 @@ func (s *Store) Message(messageID string) (model.Message, bool, error) {
 		return model.Message{}, false, err
 	}
 	return msg, true, nil
+}
+
+// FollowsThread reports whether a user is following the thread hanging off
+// parentID, according to the last version of that parent the server sent us.
+//
+// It is deliberately answered from cache alone. The caller is deciding whether a
+// reply that has just arrived deserves a notification, which is a decision worth
+// nothing if it takes a round trip; an uncached parent simply means "not that we
+// know of". Followers are not carried on the replies themselves, which is why
+// this cannot be answered from the reply the caller already holds.
+func (s *Store) FollowsThread(parentID, userID string) (bool, error) {
+	if parentID == "" || userID == "" {
+		return false, nil
+	}
+	var raw string
+	err := s.db.QueryRow(`SELECT thread_followers FROM messages WHERE id = ?`, parentID).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: thread followers %s: %w", parentID, err)
+	}
+	if raw == "" {
+		return false, nil
+	}
+	var followers []string
+	if err := json.Unmarshal([]byte(raw), &followers); err != nil {
+		return false, fmt.Errorf("store: decode thread followers %s: %w", parentID, err)
+	}
+	for _, follower := range followers {
+		if follower == userID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // OldestTimestamp returns the oldest cached message time for a room, which is

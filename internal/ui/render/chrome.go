@@ -226,6 +226,85 @@ func StatusBar(theme Theme, state StatusState) string {
 	return left + strings.Repeat(" ", state.Width-leftWidth-rightWidth) + right
 }
 
+// SettingRow is one preference in the settings overlay.
+type SettingRow struct {
+	Label    string
+	Detail   string
+	On       bool
+	Selected bool
+}
+
+// SettingsOverlay renders the preferences pane. It occupies the body the same
+// way the help overlay does, but every row is something to act on, so the
+// selected one is marked and the footer says how.
+func SettingsOverlay(theme Theme, width int, rows []SettingRow) []string {
+	labelWidth := 0
+	for _, row := range rows {
+		labelWidth = max(labelWidth, Width(row.Label))
+	}
+
+	// Where the detail lines start, under the switches rather than under the
+	// labels. On a narrow terminal that column leaves nothing to say anything in,
+	// so the detail gives up its alignment before it gives up its content.
+	detailIndent := 6 + labelWidth
+	if detailIndent > width/2 {
+		detailIndent = 4
+	}
+
+	lines := []string{theme.Title.Render("  " + Truncate("Settings", max(1, width-4))), ""}
+	for _, row := range rows {
+		// A checkbox rather than the word "on": the pane is a list of switches,
+		// and a column of glyphs is read at a glance where a column of words is
+		// read one at a time.
+		state, stateStyle := "[ ] off", theme.Muted
+		if row.On {
+			state, stateStyle = "[✓] on", theme.Key
+		}
+
+		// The switch is the row's whole point, so the label yields to it: two
+		// spaces of margin, the cursor marker, the gap, and the switch itself all
+		// come off the width before the label gets what is left.
+		budget := max(1, width-Width(state)-6)
+		label := Truncate(Pad(row.Label, min(labelWidth, budget)), budget)
+
+		marker, labelStyle := "  ", theme.Muted
+		if row.Selected {
+			marker, labelStyle = theme.Key.Render("› "), theme.Key
+		}
+		lines = append(lines, "  "+marker+labelStyle.Render(label)+"  "+stateStyle.Render(state))
+
+		if row.Detail != "" {
+			lines = append(lines, Pad("", detailIndent)+
+				theme.Faint.Render(Truncate(row.Detail, max(1, width-detailIndent-2))))
+		}
+	}
+
+	lines = append(lines,
+		"",
+		"  "+theme.Muted.Render(Truncate(
+			"↑↓ move · enter or space toggles · esc closes. Changes are saved as", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"you make them.", max(1, width-4))),
+		"",
+		theme.Title.Render("  "+Truncate("When you are notified", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"A direct message, an @mention of you or of @all / @here, and a reply", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"in a thread you follow. Ordinary channel traffic never notifies, and", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"neither does your own message coming back from the server.", max(1, width-4))),
+		"",
+		theme.Title.Render("  Sound"),
+		"  "+theme.Muted.Render(Truncate(
+			"The terminal bell by default, so whatever you have told your terminal", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"to do about alerts is what happens. Set \"sound_command\" in the config", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"file to run something else instead — e.g. paplay ~/sounds/ping.wav.", max(1, width-4))),
+	)
+	return lines
+}
+
 // HelpOverlay renders the key reference as a centred block of lines.
 func HelpOverlay(theme Theme, width int) []string {
 	entries := [][2]string{
@@ -251,6 +330,7 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"esc", "close thread / clear filter / leave the composer"},
 		{"ctrl+r", "resync now"},
 		{"ctrl+l", "mark the current room read"},
+		{",", "settings: desktop notifications and sound"},
 		{"?", "toggle this help"},
 		{"ctrl+c", "quit"},
 	}

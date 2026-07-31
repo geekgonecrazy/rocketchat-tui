@@ -8,6 +8,7 @@ import (
 
 	"github.com/geekgonecrazy/rocketchat-tui/internal/app"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/config"
+	"github.com/geekgonecrazy/rocketchat-tui/internal/notify"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/rocket"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/store"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/ui/render"
@@ -39,6 +40,9 @@ type Root struct {
 	theme  render.Theme
 	logger *slog.Logger
 	ctx    context.Context
+	// notifier outlives any one session: it caches which desktop helper this
+	// machine has, and that does not change when someone logs out and back in.
+	notifier *notify.Notifier
 
 	screen screen
 	login  loginModel
@@ -65,12 +69,13 @@ func NewRoot(ctx context.Context, cfg *config.Config, cache *store.Store, logger
 	}
 
 	return &Root{
-		cfg:    cfg,
-		cache:  cache,
-		theme:  theme,
-		logger: logger,
-		ctx:    ctx,
-		login:  newLoginModel(theme, serverURL, cfg.Username),
+		cfg:      cfg,
+		cache:    cache,
+		theme:    theme,
+		logger:   logger,
+		ctx:      ctx,
+		notifier: notify.NewStdout(),
+		login:    newLoginModel(theme, serverURL, cfg.Username),
 	}
 }
 
@@ -178,8 +183,8 @@ func (r *Root) startSession(session app.Session) tea.Cmd {
 	go r.core.Run(sessionCtx)
 	r.core.Start(session.UserID, session.Username)
 
-	r.chat = newChatModel(r.core, r.theme, session.Username,
-		shortServer(session.Client.ServerURL()), r.cfg.Downloads())
+	r.chat = newChatModel(r.core, r.cfg, r.notifier, r.theme, session.Username,
+		shortServer(session.Client.ServerURL()))
 	r.screen = screenChat
 
 	// Hand the new model the size it missed while the login form was up.

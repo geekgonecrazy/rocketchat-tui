@@ -173,3 +173,59 @@ func TestDownloadsFallsBackWhenUnset(t *testing.T) {
 		t.Errorf("default download directory %q is not usable: %v", got, err)
 	}
 }
+
+// Absent is not off. Every config file written before notifications existed
+// lacks these keys, and reading them as "the user turned this off" would ship a
+// feature that is silently disabled for everyone who already runs rctui.
+func TestNotificationsDefaultToOn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"server_url":"https://chat.example.com"}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Notifications.DesktopEnabled() {
+		t.Error("desktop notifications should default to on")
+	}
+	if !cfg.Notifications.SoundEnabled() {
+		t.Error("notification sound should default to on")
+	}
+	if cfg.Notifications.SoundCommand != "" {
+		t.Errorf("sound command = %q, want empty (the bell)", cfg.Notifications.SoundCommand)
+	}
+}
+
+func TestNotificationTogglesSurviveASave(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cfg.ServerURL = "https://chat.example.com"
+	cfg.Notifications.SetDesktop(false)
+	cfg.Notifications.SetSound(true)
+	cfg.Notifications.SoundCommand = "paplay ~/ping.wav"
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	reloaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	// The false is the whole point: it is the value a plain bool could not tell
+	// apart from "not written yet", and the one that has to survive.
+	if reloaded.Notifications.DesktopEnabled() {
+		t.Error("desktop off did not survive the round trip")
+	}
+	if !reloaded.Notifications.SoundEnabled() {
+		t.Error("sound on did not survive the round trip")
+	}
+	if reloaded.Notifications.SoundCommand != "paplay ~/ping.wav" {
+		t.Errorf("sound command = %q", reloaded.Notifications.SoundCommand)
+	}
+}

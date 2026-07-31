@@ -102,6 +102,13 @@ var migrations = []string{
 		provides_preview INTEGER NOT NULL DEFAULT 0
 	);
 	`,
+	`
+	-- Who follows a thread, as the server reports it on the thread's parent
+	-- message. A reply carries no such list of its own, so answering "should
+	-- this reply notify me" means looking the parent up — which is only possible
+	-- offline if we kept it.
+	ALTER TABLE messages ADD COLUMN thread_followers TEXT NOT NULL DEFAULT '';
+	`,
 }
 
 func (s *Store) migrate() error {

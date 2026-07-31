@@ -171,10 +171,23 @@ func TestLiveScreens(t *testing.T) {
 	d.pump(5 * time.Second)
 	d.frame("room opened by clicking the sidebar")
 
+	// Both overlays need focus off the composer, which is where opening a room
+	// leaves it: "?" and "," are ordinary characters while you are writing.
+	d.send(tea.KeyMsg{Type: tea.KeyTab}) // composer -> rooms
+
 	// Help overlay, to confirm the key reference renders.
 	d.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
 	d.pump(300 * time.Millisecond)
 	d.frame("help overlay")
+
+	// Settings, driven rather than just shown: the pane is a list of switches,
+	// so the frame worth looking at is one after the cursor has moved.
+	d.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{','}})
+	d.send(tea.KeyMsg{Type: tea.KeyDown})
+	d.pump(300 * time.Millisecond)
+	d.frame("settings pane")
+	d.send(tea.KeyMsg{Type: tea.KeyEsc})
+	d.pump(300 * time.Millisecond)
 
 	if strings.Contains(d.model.View(), "disconnected") {
 		t.Error("the client reports itself disconnected from a reachable server")

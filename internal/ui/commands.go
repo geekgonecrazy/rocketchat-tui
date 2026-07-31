@@ -57,6 +57,17 @@ func (m chatModel) runClientCommand(command model.Command, params string) (chatM
 		m.showHelp = true
 		return m.clearComposer(), nil
 
+	case "settings":
+		// The pane takes the keyboard, so the composer has to give it up: leaving
+		// focus there would send the arrow keys to a text box nobody can see.
+		m.showHelp = false
+		m.settings.open = true
+		m.settings.cursor = 0
+		m.focus = focusMessages
+		m = m.clearComposer()
+		cmd := m.syncComposerFocus()
+		return m, cmd
+
 	case "open":
 		return m.openRoomByName(params)
 	}

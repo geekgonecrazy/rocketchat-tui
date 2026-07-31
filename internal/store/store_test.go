@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -998,5 +1000,160 @@ func TestCommandsOnAColdCacheIsEmpty(t *testing.T) {
 	}
 	if len(commands) != 0 {
 		t.Errorf("got %+v, want nothing", commands)
+	}
+}
+
+// A thread reply carries no follower list of its own, so "should this notify
+// me" can only be answered from the parent — which is why the parent's list is
+// kept at all.
+func TestFollowsThread(t *testing.T) {
+	s := openStore(t)
+	at := time.Now().Add(-time.Hour)
+
+	if err := s.SaveMessages([]rocket.Message{
+		{ID: "followed", RoomID: "r1", Msg: "topic", Timestamp: ts(at),
+			ThreadCount: 1, User: rocket.User{Username: "alice"},
+			Replies: []string{"someone-else", "self"}},
+		{ID: "not-followed", RoomID: "r1", Msg: "other topic", Timestamp: ts(at),
+			ThreadCount: 1, User: rocket.User{Username: "alice"},
+			Replies: []string{"someone-else"}},
+		{ID: "no-thread", RoomID: "r1", Msg: "plain", Timestamp: ts(at),
+			User: rocket.User{Username: "alice"}},
+	}); err != nil {
+		t.Fatalf("SaveMessages: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		parent string
+		user   string
+		want   bool
+	}{
+		{"a listed follower", "followed", "self", true},
+		{"someone not listed", "followed", "stranger", false},
+		{"a thread nobody follows", "not-followed", "self", false},
+		{"a message with no thread", "no-thread", "self", false},
+		// Not an error, and specifically not true: a reply can outrun the updated
+		// parent that lists its followers, and an uncached parent has to mean
+		// "not that we know of" rather than "notify anyway".
+		{"a parent we have never seen", "missing", "self", false},
+		{"no parent at all", "", "self", false},
+		{"no user", "followed", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := s.FollowsThread(tc.parent, tc.user)
+			if err != nil {
+				t.Fatalf("FollowsThread: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("FollowsThread(%q, %q) = %v, want %v", tc.parent, tc.user, got, tc.want)
+			}
+		})
+	}
+}
+
+// Unfollowing is expressed by the server sending the parent again with a
+// shorter list, so the stored list has to be replaced rather than merged.
+func TestFollowsThreadReflectsUnfollowing(t *testing.T) {
+	s := openStore(t)
+	at := time.Now().Add(-time.Hour)
+
+	parent := rocket.Message{ID: "p", RoomID: "r1", Msg: "topic", Timestamp: ts(at),
+		ThreadCount: 1, User: rocket.User{Username: "alice"}, Replies: []string{"self"}}
+	if err := s.SaveMessages([]rocket.Message{parent}); err != nil {
+		t.Fatalf("SaveMessages: %v", err)
+	}
+
+	parent.Replies = []string{"alice"}
+	if err := s.SaveMessages([]rocket.Message{parent}); err != nil {
+		t.Fatalf("SaveMessages again: %v", err)
+	}
+
+	follows, err := s.FollowsThread("p", "self")
+	if err != nil {
+		t.Fatalf("FollowsThread: %v", err)
+	}
+	if follows {
+		t.Error("the follower list should have been replaced, not merged")
+	}
+}
+
+// Everyone already running rctui has a cache.db built by an older schema. The
+// column is added by migration rather than by recreating the table, so this is
+// the path that matters — and the one a fresh-database test cannot exercise.
+func TestUpgradingAnExistingCacheKeepsItsMessages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.db")
+	at := time.Now().Add(-time.Hour)
+
+	first, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	first.SetIdentity("self", "me")
+	if err := first.SaveMessages([]rocket.Message{
+		{ID: "old", RoomID: "r1", Msg: "from before", Timestamp: ts(at),
+			User: rocket.User{Username: "alice"}},
+	}); err != nil {
+		t.Fatalf("SaveMessages: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Put the database back the way the previous release left it, so reopening
+	// replays the newest migration over a table that already holds rows.
+	rewindOneMigration(t, path, "ALTER TABLE messages DROP COLUMN thread_followers")
+
+	second, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("reopen after rewind: %v", err)
+	}
+	defer func() { _ = second.Close() }()
+	second.SetIdentity("self", "me")
+
+	timeline, err := second.RoomTimeline("r1", 10)
+	if err != nil {
+		t.Fatalf("RoomTimeline: %v", err)
+	}
+	if len(timeline) != 1 || timeline[0].Text != "from before" {
+		t.Fatalf("the upgrade lost cached messages: %+v", timeline)
+	}
+
+	follows, err := second.FollowsThread("old", "self")
+	if err != nil {
+		t.Fatalf("FollowsThread on an upgraded row: %v", err)
+	}
+	if follows {
+		t.Error("a row that predates the column should follow nothing")
+	}
+}
+
+// rewindOneMigration undoes the newest migration by hand — its effect via undo,
+// and the version counter that records it — so that reopening the database runs
+// that migration for real against data written under the old schema.
+//
+// The version is decremented rather than set to a literal so that adding the
+// next migration does not silently turn this into a test of the wrong one.
+func rewindOneMigration(t *testing.T, path, undo string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open %s directly: %v", path, err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if _, err := db.Exec(undo); err != nil {
+		t.Fatalf("undo migration: %v", err)
+	}
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatalf("read schema version: %v", err)
+	}
+	if version < 1 {
+		t.Fatalf("schema version is %d; nothing to rewind", version)
+	}
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, version-1)); err != nil {
+		t.Fatalf("rewind schema version: %v", err)
 	}
 }

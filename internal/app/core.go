@@ -94,6 +94,12 @@ type Core struct {
 	threadListDirty  map[string]bool
 	threadListSynced map[string]time.Time
 
+	// notified remembers which messages have already raised a desktop
+	// notification, with notifiedOrder keeping insertion order so the oldest can
+	// be dropped. See notifications.go.
+	notified      map[string]bool
+	notifiedOrder []string
+
 	// outgoing typing state, mirroring the web client's throttling
 	typingActive  map[string]bool
 	typingRefresh map[string]time.Time
@@ -126,6 +132,7 @@ func New(client *rocket.Client, cache *store.Store, logger *slog.Logger) *Core {
 		membersSynced:    make(map[string]time.Time),
 		threadListDirty:  make(map[string]bool),
 		threadListSynced: make(map[string]time.Time),
+		notified:         make(map[string]bool),
 		typingActive:     make(map[string]bool),
 		typingRefresh:    make(map[string]time.Time),
 		typingExpiry:     make(map[string]time.Time),

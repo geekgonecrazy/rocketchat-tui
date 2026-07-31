@@ -16,6 +16,13 @@ import (
 func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 	pressed := msg.String()
 
+	// The settings pane is modal, and more so than the reaction picker: it is a
+	// list of switches to operate rather than something to dismiss, so every key
+	// but "quit" belongs to it while it is open.
+	if m.settings.open && pressed != "ctrl+c" {
+		return m.handleSettingsKey(pressed)
+	}
+
 	// The reaction picker is modal, so it takes input before anything else.
 	if m.picker.mode == pickerReact {
 		return m.handleReactPickerKey(msg)
@@ -151,6 +158,14 @@ func (m chatModel) handleKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		switch pressed {
 		case "?":
 			m.showHelp = !m.showHelp
+			return m, nil
+		case ",":
+			// The comma is the conventional preferences key, and one of the few
+			// printable characters the room and message panes have no use for.
+			// /settings opens the same pane from the composer, where a comma is
+			// text.
+			m.showHelp = false
+			m.settings.toggleOpen()
 			return m, nil
 		case "q":
 			return m, tea.Quit

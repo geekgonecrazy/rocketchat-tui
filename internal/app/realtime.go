@@ -70,6 +70,12 @@ func (c *Core) handleIncomingMessage(msg rocket.Message) {
 	// The author is no longer typing once their message lands.
 	c.handleTyping(msg.RoomID, msg.User.Username, false)
 
+	// Before the open-room shortcut below: a mention or a DM is worth a
+	// notification whether or not the user happens to have that room on screen.
+	// It must also come after the save, because deciding whether a thread reply
+	// is followed reads the parent back out of the cache.
+	c.maybeNotify(msg)
+
 	if msg.RoomID != c.currentRoom {
 		// Unread counts arrive via the subscription stream; refresh ordering so
 		// the room floats up the sidebar immediately.

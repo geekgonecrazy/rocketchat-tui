@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -8,7 +10,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/geekgonecrazy/rocketchat-tui/internal/app"
+	"github.com/geekgonecrazy/rocketchat-tui/internal/config"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/model"
+	"github.com/geekgonecrazy/rocketchat-tui/internal/notify"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/rocket"
 	"github.com/geekgonecrazy/rocketchat-tui/internal/ui/render"
 )
@@ -16,6 +20,17 @@ import (
 // newTestChat builds a sized chat model. The core is real but not running: its
 // action channel is buffered, so UI calls are recorded and never block.
 func newTestChat(t *testing.T) chatModel {
+	m, _ := newTestChatWithTerminal(t)
+	return m
+}
+
+// newTestChatWithTerminal is newTestChat plus the buffer standing in for the
+// terminal, for tests that care whether the bell was rung.
+//
+// The config lives in a temp directory rather than nowhere: the settings pane
+// saves as you toggle, and a model that cannot save would pass a test of
+// toggling while failing the thing the toggle is for.
+func newTestChatWithTerminal(t *testing.T) (chatModel, *bytes.Buffer) {
 	t.Helper()
 	client, err := rocket.NewClient("https://chat.example.com")
 	if err != nil {
@@ -23,9 +38,19 @@ func newTestChat(t *testing.T) chatModel {
 	}
 	core := app.New(client, nil, nil)
 
-	m := newChatModel(core, render.DefaultTheme(), "tester", "chat.example.com", t.TempDir())
+	cfg, err := config.Load(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	cfg.DownloadDir = t.TempDir()
+
+	// Claiming to be a terminal so escape sequences are actually written; they
+	// go to the buffer, so nothing reaches the test runner's output.
+	terminal := &bytes.Buffer{}
+	m := newChatModel(core, cfg, notify.New(terminal, true),
+		render.DefaultTheme(), "tester", "chat.example.com")
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	return m
+	return m, terminal
 }
 
 func press(s string) tea.KeyMsg {
