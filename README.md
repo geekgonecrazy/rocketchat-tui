@@ -9,6 +9,28 @@ deprecated Go SDK: REST for anything fetched or paginated, DDP over WebSocket
 purely for realtime push. State is cached in SQLite, so launching shows your
 rooms and history immediately instead of an empty screen.
 
+## The Atomic history
+
+**If you came here to read the history, read it in Atomic.** The git commits are
+squashed batches — `20 Atomic changes` and the like — because git is the mirror,
+not the record. The real history lives in Atomic, alongside git, and carries what
+a git clone does not: the intent behind each change, the provenance graph that
+led to it, and AI attestation where a change was machine-authored. Browse it at
+<https://aaron.atomic.storage/workspaces/clis/projects/rocketchat-tui/code>, or
+take a working copy:
+
+```sh
+atomic clone https://aaron.atomic.storage/workspaces/clis/projects/rocketchat-tui/code
+```
+
+Then, in the clone:
+
+```sh
+atomic log                  # changes on the current view
+atomic change -p <hash>     # provenance: the goals, explorations and commitments behind it
+atomic change -a <hash>     # AI attestation: vendor, model, tokens, cost
+```
+
 ## Features
 
 - Login with username/password (with 2FA) or a personal access token; the
@@ -78,26 +100,6 @@ Flags:
 
 Config lives at `$XDG_CONFIG_HOME/rctui/config.json` (mode 0600, it holds an
 auth token); the cache lives at `$XDG_DATA_HOME/rctui/cache.db`.
-
-## The Atomic history
-
-This repository is also tracked in Atomic, alongside git. That side carries what
-a git clone does not: the intent behind each change, the provenance graph that
-led to it, and AI attestation where a change was machine-authored. Browse it at
-<https://aaron.atomic.storage/workspaces/clis/projects/rocketchat-tui/code>, or
-take a working copy:
-
-```sh
-atomic clone https://aaron.atomic.storage/workspaces/clis/projects/rocketchat-tui/code
-```
-
-Then, in the clone:
-
-```sh
-atomic log                  # changes on the current view
-atomic change -p <hash>     # provenance: the goals, explorations and commitments behind it
-atomic change -a <hash>     # AI attestation: vendor, model, tokens, cost
-```
 
 ## Keys
 
