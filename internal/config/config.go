@@ -27,6 +27,10 @@ type Config struct {
 	// resolved by Downloads.
 	DownloadDir string `json:"download_dir,omitempty"`
 
+	// Editor is the command used to compose long messages; "" falls back to
+	// $VISUAL, then $EDITOR.
+	Editor string `json:"editor,omitempty"`
+
 	// Notifications controls what happens when someone addresses you.
 	Notifications Notifications `json:"notifications"`
 
@@ -83,6 +87,23 @@ func (c *Config) Downloads() string {
 	return home
 }
 
+// EditorCommand is the command that composes a long message: whatever the user
+// configured, else $VISUAL, else $EDITOR, else "" — there is deliberately no
+// hard-coded vi fallback, because trapping a non-vi user in a modal editor from
+// a chat client is worse than saying nothing happened and why.
+//
+// Pass os.Getenv; the indirection is so the precedence can be tested without
+// mutating the process environment.
+func (c *Config) EditorCommand(getenv func(string) string) string {
+	if configured := strings.TrimSpace(c.Editor); configured != "" {
+		return configured
+	}
+	if visual := strings.TrimSpace(getenv("VISUAL")); visual != "" {
+		return visual
+	}
+	return strings.TrimSpace(getenv("EDITOR"))
+}
+
 // expandHome resolves a leading ~, which people write in config files and
 // which nothing in the standard library expands for us.
 func expandHome(path string) (string, error) {
@@ -99,8 +120,31 @@ func expandHome(path string) (string, error) {
 // Paths resolves the config file and cache database locations, honouring
 // XDG_CONFIG_HOME / XDG_DATA_HOME.
 func Paths() (configPath, dbPath string, err error) {
-	configHome := os.Getenv("XDG_CONFIG_HOME")
-	dataHome := os.Getenv("XDG_DATA_HOME")
+	configHome, dataHome, err := xdgHomes()
+	if err != nil {
+		return "", "", err
+	}
+	return filepath.Join(configHome, "rctui", "config.json"),
+		filepath.Join(dataHome, "rctui", "cache.db"),
+		nil
+}
+
+// ComposePath is the file handed to the user's editor when they compose a long
+// message. It sits beside the cache rather than in a temp directory on purpose:
+// it is the recovery copy, so it must still be there tomorrow.
+func ComposePath() (string, error) {
+	_, dataHome, err := xdgHomes()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataHome, "rctui", "compose.md"), nil
+}
+
+// xdgHomes resolves the config and data roots, falling back to the conventional
+// locations under the home directory.
+func xdgHomes() (configHome, dataHome string, err error) {
+	configHome = os.Getenv("XDG_CONFIG_HOME")
+	dataHome = os.Getenv("XDG_DATA_HOME")
 	if configHome == "" || dataHome == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -113,9 +157,7 @@ func Paths() (configPath, dbPath string, err error) {
 			dataHome = filepath.Join(home, ".local", "share")
 		}
 	}
-	return filepath.Join(configHome, "rctui", "config.json"),
-		filepath.Join(dataHome, "rctui", "cache.db"),
-		nil
+	return configHome, dataHome, nil
 }
 
 // Load reads the config, returning an empty one if the file does not exist.

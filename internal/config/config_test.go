@@ -229,3 +229,46 @@ func TestNotificationTogglesSurviveASave(t *testing.T) {
 		t.Errorf("sound command = %q", reloaded.Notifications.SoundCommand)
 	}
 }
+
+func TestEditorCommandPrecedence(t *testing.T) {
+	env := func(pairs map[string]string) func(string) string {
+		return func(name string) string { return pairs[name] }
+	}
+
+	cases := []struct {
+		name       string
+		configured string
+		env        map[string]string
+		want       string
+	}{
+		{"config wins over both", " nvim ", map[string]string{"VISUAL": "vim", "EDITOR": "nano"}, "nvim"},
+		{"visual wins over editor", "", map[string]string{"VISUAL": "code --wait", "EDITOR": "nano"}, "code --wait"},
+		{"editor when visual is unset", "", map[string]string{"EDITOR": "nano"}, "nano"},
+		{"blank visual falls through", "", map[string]string{"VISUAL": "   ", "EDITOR": "nano"}, "nano"},
+		// No vi fallback: an empty answer is what makes the key refuse with a
+		// message rather than opening a modal editor on someone who does not use one.
+		{"nothing configured anywhere", "", nil, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Editor: tc.configured}
+			if got := cfg.EditorCommand(env(tc.env)); got != tc.want {
+				t.Errorf("EditorCommand = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestComposePathHonoursXDGDataHome(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dir)
+
+	path, err := config.ComposePath()
+	if err != nil {
+		t.Fatalf("ComposePath: %v", err)
+	}
+	if want := filepath.Join(dir, "rctui", "compose.md"); path != want {
+		t.Errorf("ComposePath = %q, want %q", path, want)
+	}
+}

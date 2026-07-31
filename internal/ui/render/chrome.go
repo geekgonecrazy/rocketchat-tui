@@ -327,6 +327,7 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"o", "open its attachment in a desktop app"},
 		{"ctrl+o", "attach a file to send with your message"},
 		{"ctrl+x", "remove the last file you attached"},
+		{"ctrl+g", "write your message in $EDITOR"},
 		{"esc", "close thread / clear filter / leave the composer"},
 		{"ctrl+r", "resync now"},
 		{"ctrl+l", "mark the current room read"},
@@ -401,6 +402,25 @@ func HelpOverlay(theme Theme, width int) []string {
 			"nothing is uploaded until you send the message. ctrl+x removes the", max(1, width-4))),
 		"  "+theme.Muted.Render(Truncate(
 			"last one; leaving the room drops them all.", max(1, width-4))),
+	)
+
+	// Quit-to-cancel and empty-clears cannot be read off the key list, and an
+	// undocumented recovery file insures nobody.
+	lines = append(lines,
+		"",
+		theme.Title.Render("  Composing in an editor"),
+		"  "+theme.Muted.Render(Truncate(
+			"ctrl+g opens your draft in $EDITOR (or $VISUAL, or \"editor\" in the", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"config file). Save and quit, and what you wrote replaces the composer;", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"quit without saving, or exit non-zero with :cq, and the composer is", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"left alone. Saving an empty file clears it.", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"The draft lives at $XDG_DATA_HOME/rctui/compose.md and is never", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"deleted, so a message is recoverable if anything goes wrong.", max(1, width-4))),
 	)
 
 	lines = append(lines,
