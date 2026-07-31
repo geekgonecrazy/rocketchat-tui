@@ -37,7 +37,7 @@ rooms and history immediately instead of an empty screen.
 ## Install
 
 ```sh
-go install github.com/geekgonecrazy/rocketchat-tui/cmd/rctui@latest
+go install github.com/geekgonecrazy/rocketchat-tui/cmd/rctui@dev
 ```
 
 That puts an `rctui` binary in `$(go env GOPATH)/bin` — add it to your `PATH` if
