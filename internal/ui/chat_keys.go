@@ -327,6 +327,12 @@ func (m chatModel) handleComposerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		if m.editing() && m.atComposerBottom() {
 			return m.stepEdit(1)
 		}
+	case "ctrl+g":
+		// No guards: the composer is typeable in threads, in read-only rooms and
+		// mid-edit of a sent message — arguably the best use of this — and "I can
+		// type here but ctrl+g refuses" is harder to explain than letting it work.
+		// send() already enforces where a message may actually go.
+		return m.openEditor()
 	case "pgup":
 		m.scrollBy(-m.bodyHeight() / 2)
 		return m, nil

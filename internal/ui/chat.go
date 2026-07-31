@@ -39,6 +39,9 @@ const (
 // clearNoticeMsg expires a transient status message.
 type clearNoticeMsg struct{}
 
+// editorFinishedMsg reports that $EDITOR has handed the terminal back.
+type editorFinishedMsg struct{ err error }
+
 // chatModel is the main screen. It holds view state and input widgets; all
 // layout lives in the render package, and all data comes from app events.
 type chatModel struct {
@@ -141,6 +144,11 @@ type chatModel struct {
 	downloadDir   string
 	imageProtocol termimg.Protocol
 
+	// composePath is the file handed to $EDITOR by ctrl+g. Deliberately stable
+	// and never deleted: between the editor exiting and the composer being
+	// filled, it is the only copy of the message.
+	composePath string
+
 	// uploads are the files queued for the next send, in the order they were
 	// attached. Nothing here has left the machine yet: like the web client, a
 	// file is only posted when the message it belongs to is.
@@ -160,6 +168,11 @@ func newChatModel(core *app.Core, cfg *config.Config, notifier *notify.Notifier,
 	// Enter sends; a newline needs an explicit modifier.
 	composer.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("alt+enter", "ctrl+j"))
 
+	// A data directory that cannot be located is not worth failing startup over:
+	// ctrl+g refuses with a notice, which says more at the moment it matters
+	// than an error on the way in would.
+	composePath, _ := config.ComposePath()
+
 	return chatModel{
 		core:     core,
 		cfg:      cfg,
@@ -178,6 +191,7 @@ func newChatModel(core *app.Core, cfg *config.Config, notifier *notify.Notifier,
 		pinnedToBottom: true,
 		conn:           rocket.Connecting,
 		downloadDir:    cfg.Downloads(),
+		composePath:    composePath,
 		// Detected once at startup: the terminal cannot change out from under a
 		// running process, and probing on every keypress would be wasted work.
 		imageProtocol: termimg.DetectEnv(),
@@ -262,6 +276,9 @@ func (m chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 
 	case viewerFinishedMsg:
 		return m.viewerClosed(msg)
+
+	case editorFinishedMsg:
+		return m.editorClosed(msg)
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
