@@ -4,7 +4,7 @@ A terminal client for Rocket.Chat, written in Go with
 [Bubbletea](https://github.com/charmbracelet/bubbletea) and
 [Lipgloss](https://github.com/charmbracelet/lipgloss).
 
-<img src="docs/demo.gif" width="900" alt="rctui demo">
+<img src="docs/demo.gif" alt="rctui demo">
 
 It ships its own minimal Rocket.Chat client rather than depending on the
 deprecated Go SDK: REST for anything fetched or paginated, DDP over WebSocket
