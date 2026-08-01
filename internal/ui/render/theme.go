@@ -70,6 +70,10 @@ type Theme struct {
 	Reaction     lipgloss.Style
 	ReactionMine lipgloss.Style
 	Attachment   lipgloss.Style
+	// Quote is someone else's words, quoted: dimmer than the reply they belong
+	// to, so the eye lands on what is being said now rather than on what it
+	// answers.
+	Quote        lipgloss.Style
 	Divider      lipgloss.Style
 	UnreadRule   lipgloss.Style
 	DateRule     lipgloss.Style
@@ -116,6 +120,7 @@ func NewTheme(p Palette) Theme {
 		Reaction:     base.Foreground(p.Muted),
 		ReactionMine: base.Foreground(p.Accent).Bold(true),
 		Attachment:   base.Foreground(p.Muted).Italic(true),
+		Quote:        base.Foreground(p.Faint).Italic(true),
 		Divider:      base.Foreground(p.Border),
 		UnreadRule:   base.Foreground(p.Danger).Bold(true),
 		DateRule:     base.Foreground(p.Faint),

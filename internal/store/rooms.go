@@ -200,13 +200,12 @@ type scanner interface {
 func scanRoom(row scanner) (model.Room, error) {
 	var (
 		room                              model.Room
-		roomType                          string
 		teamMain, alert, open, favorite   int
 		readOnly, archived                int
 		lastMessageMillis, lastSeenMillis int64
 	)
 	err := row.Scan(
-		&room.ID, &roomType, &room.Name, &room.DisplayName, &room.Topic,
+		&room.ID, &room.Type, &room.Name, &room.DisplayName, &room.Topic,
 		&room.TeamID, &teamMain, &room.ParentRoomID,
 		&room.Unread, &room.UserMentions, &room.GroupMentions, &alert, &open, &favorite,
 		&lastMessageMillis, &lastSeenMillis, &readOnly, &archived, &room.UserCount,
@@ -225,7 +224,7 @@ func scanRoom(row scanner) (model.Room, error) {
 	room.Archived = archived == 1
 	room.LastMessageAt = fromMillis(lastMessageMillis)
 	room.LastSeenAt = fromMillis(lastSeenMillis)
-	room.Kind = model.RoomKind(roomType, room.TeamMain, room.ParentRoomID)
+	room.Kind = model.RoomKind(room.Type, room.TeamMain, room.ParentRoomID)
 	return room, nil
 }
 

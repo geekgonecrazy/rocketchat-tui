@@ -492,6 +492,48 @@ is dropped from the cache when the call succeeds instead.
 
 ---
 
+## 21. Quoting is a URL convention, not an API
+
+**Status:** defensive · **Severity:** silently sends a plain message if the link is wrong
+
+There is no quote parameter on `chat.sendMessage` and no quote field on a
+message. A client quotes by putting a permalink to the quoted message at the
+front of the text it sends:
+
+```
+[ ](https://server/channel/general?msg=<messageId>) what the sender wants to add
+```
+
+A server-side hook then resolves the link and attaches the quoted message as an
+attachment carrying `author_name`, `text`, and `message_link` — which is how the
+quote comes back to every client, including the one that sent it. Three
+consequences a client has to live with:
+
+- **The trigger is the `?msg=` query parameter on a URL under the server's own
+  site URL.** A link built against a different host — or against a server whose
+  `Site_URL` setting disagrees with the address the client logged in to — is left
+  as an ordinary link, and the message goes out with a URL in it instead of a
+  quote. We build the link from the address the session is on, which is the only
+  one we know.
+- **The path has to be the room's real route.** `/channel/`, `/group/`,
+  `/direct/` come from the room's `t`, not from the kind we resolve for display
+  (§9): a private team and a private discussion are both `p` while being neither
+  "channel" nor "private" as far as the UI is concerned. The wrong path still
+  quotes — the hook reads the query parameter — but the link opens the wrong room
+  for anyone who clicks it in another client.
+- **The markup stays in the message text forever.** It is `[ ](…)`, a link with a
+  blank label, so clients render it as nothing; a client that renders raw markdown
+  shows a URL in front of every quoted reply. We strip blank-label links when
+  rendering and keep them in the stored text, so editing a quoted message
+  round-trips the quote instead of dropping it.
+
+**Also worth knowing:** the attachment for a quote sets no `title_link` and no
+`image_url`, so it is neither an upload nor an unfurled preview. `message_link`
+is the only field that distinguishes it, which is why it is carried through the
+cache (`FromRocketAttachment`).
+
+---
+
 ## Open questions
 
 Things not yet settled against a live server:
@@ -525,6 +567,15 @@ Things not yet settled against a live server:
 - **Whether the live target has `rooms.media`.** 8.4 should (§17), so the
   fallback to `rooms.upload` is the untested branch against a real server. The
   fake covers both, but only the fake has been made to 404 the route.
+- **Whether a quote sent by rctui comes back as a quote attachment on the live
+  target (§21).** The fake server stores what it is sent and does not run the
+  hook that builds the attachment, so the round trip — link out, attachment back
+  — has only been exercised in halves: the permalink we send is asserted
+  end-to-end, and rendering an incoming quote is unit-tested against an
+  attachment shaped the way the server documents. The first live quote will say
+  whether the two meet. Related and unconfirmed: whether the hook runs for a file
+  upload's caption as well as for a plain message, which is what decides if a
+  quote can ride along with attached files.
 - **Whether `rooms.mediaConfirm` accepts `description`.** The web client sends
   one, but its presence in that endpoint's body schema is unverified, and a
   strict validator would reject the whole upload for an unknown property. We

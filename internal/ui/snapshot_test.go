@@ -47,7 +47,15 @@ func TestFullScreenSnapshot(t *testing.T) {
 					Title: "perf-before-after.png", Text: "42% faster on cold start",
 					Source: "/file-upload/img1/perf-before-after.png", MIME: "image/png", Upload: true,
 				}}},
-			{ID: "f", Username: "tester", Author: "Test Tester", Text: "Nice, I'll review after standup.", At: lastSeen.Add(3 * time.Minute), Own: true},
+			// A quote, as it comes back from the server: the permalink in the text
+			// and the attachment the server built from it.
+			{ID: "f", Username: "tester", Author: "Test Tester", Own: true,
+				Text: "[ ](https://chat.example.com/channel/general?msg=a) Nice, I'll review after standup.",
+				At:   lastSeen.Add(3 * time.Minute),
+				Attachments: []model.Attachment{{
+					Title: "Alice", Text: "I pushed the auth refactor",
+					MessageLink: "https://chat.example.com/channel/general?msg=a",
+				}}},
 		},
 		UnreadFrom: lastSeen, UnreadCount: 2, HasMore: true,
 	})
@@ -63,15 +71,17 @@ func TestFullScreenSnapshot(t *testing.T) {
 		"# general", "company wide chatter", // header: room and topic
 		"@2", "3 unread", // header: attention counters
 		"@alice", "& engineering", "\u21b3 auth-spike", // sidebar: DM, team, discussion
-		"Today",                            // date separator
-		"new messages",                     // unread divider
-		"\u21b3 3 replies",                 // thread affordance
-		"\U0001f44d 2",                     // reactions render as glyphs
-		"\U0001f5bc perf-before-after.png", // image attachment, sigilled as viewable
-		"Carol joined the channel",         // system message
-		"alice and bob are typing\u2026",   // typing indicator
-		"sounds good",                      // composer contents
-		"\u25cf connected",                 // status bar
+		"Today",                               // date separator
+		"new messages",                        // unread divider
+		"\u21b3 3 replies",                    // thread affordance
+		"\U0001f44d 2",                        // reactions render as glyphs
+		"\U0001f5bc perf-before-after.png",    // image attachment, sigilled as viewable
+		"❝ Alice: I pushed the auth refactor", // a quote, above the reply to it
+		"Nice, I'll review after standup.",    // and the reply, with no link markup left
+		"Carol joined the channel",            // system message
+		"alice and bob are typing\u2026",      // typing indicator
+		"sounds good",                         // composer contents
+		"\u25cf connected",                    // status bar
 	}
 	for _, fragment := range want {
 		if !strings.Contains(view, fragment) {

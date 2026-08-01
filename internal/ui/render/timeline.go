@@ -164,10 +164,27 @@ func Timeline(theme Theme, state TimelineState) TimelineView {
 			emit(authorLine(theme, msg, contentWidth))
 		}
 
-		for _, line := range Wrap(emoji.Replace(msg.Text), contentWidth) {
-			emit(theme.Body.Render(line))
+		// A quote goes above the reply, the way every other client stacks it: it
+		// is what the reply is about, and reading the answer first is reading it
+		// without its question.
+		for _, attachment := range msg.Attachments {
+			if attachment.IsQuote() {
+				emit(theme.Quote.Render(Truncate(quoteLine(attachment), contentWidth)))
+			}
+		}
+		// The permalink the quote was made with is markup, not words. The server
+		// has already turned it into the line above, so showing it as well would
+		// put a URL in front of every quoted reply.
+		body := model.StripQuoteMarkup(msg.Text)
+		if body != "" || !hasAttachment(msg) {
+			for _, line := range Wrap(emoji.Replace(body), contentWidth) {
+				emit(theme.Body.Render(line))
+			}
 		}
 		for _, attachment := range msg.Attachments {
+			if attachment.IsQuote() {
+				continue
+			}
 			emit(theme.Attachment.Render(Truncate(attachmentSigil(attachment)+" "+attachmentLabel(attachment), contentWidth)))
 		}
 		if len(msg.Reactions) > 0 {
@@ -232,7 +249,7 @@ func mirrorHint(messages []model.Message, msg model.Message) string {
 
 // previewText is a message reduced to one line, for hints and lists.
 func previewText(msg model.Message) string {
-	text := msg.Text
+	text := model.StripQuoteMarkup(msg.Text)
 	if text == "" && msg.IsSystem() {
 		text = msg.SystemText()
 	}
@@ -296,6 +313,26 @@ func reactionChips(theme Theme, reactions []model.Reaction, width int) (string, 
 		cursor += Width(chip)
 	}
 	return b.String(), spans
+}
+
+// hasAttachment reports whether anything else on the message has something to
+// say, which is what makes an empty body worth skipping rather than drawing as a
+// blank line: a quote with no comment, or a bare file upload.
+func hasAttachment(msg model.Message) bool { return len(msg.Attachments) > 0 }
+
+// quoteLine renders a quoted message as one line of reported speech. Who said it
+// matters as much as what was said — a quote with no name attached says only that
+// the reply is about something else.
+func quoteLine(attachment model.Attachment) string {
+	text := emoji.Replace(strings.ReplaceAll(attachment.Text, "\n", " "))
+	switch {
+	case attachment.Title != "" && text != "":
+		return "❝ " + attachment.Title + ": " + text
+	case attachment.Title != "":
+		return "❝ " + attachment.Title
+	default:
+		return "❝ " + text
+	}
 }
 
 // attachmentSigil marks an image differently from any other attachment, so it

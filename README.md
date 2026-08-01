@@ -47,6 +47,9 @@ atomic change -a <hash>     # AI attestation: vendor, model, tokens, cost
   again for the one before, staying inside whatever you are looking at
 - Emoji: shortcodes render as glyphs, `:jo` pops up an autocomplete while you
   type, and any message can be reacted to
+- Quote a message with `"` — it goes out as the permalink Rocket.Chat expects,
+  so it reads as a quote in every client, and quotes arriving from elsewhere
+  render as `❝` lines instead of raw link markup
 - Mentions: `@` autocompletes the people in the room, plus `@all` and `@here`;
   `#` autocompletes the rooms you are in
 - Slash commands: `/` lists everything this server offers — its own commands and
@@ -117,6 +120,7 @@ draft at `$XDG_DATA_HOME/rctui/compose.md`.
 | `ctrl+t` | Thread list for this room — works while typing |
 | `alt+c` | In a thread: also send your reply to the channel |
 | `r` | React to the selected message |
+| `"` | Quote the selected message in the one you send next |
 | `@` / `#` | Autocomplete a person or a channel while typing |
 | `/` (empty composer) | List the slash commands this server offers |
 | `alt+enter` | Newline in the composer |
@@ -204,6 +208,38 @@ Typing a colon followed by a letter or two opens an autocomplete:
 To react, select a message and press `r`. The picker opens on a set of common
 reactions; type to search the full set. Reactions you have already made are
 highlighted, and choosing one again removes it — as does clicking it.
+
+### Quoting
+
+Select a message and press `"`. A banner appears above the composer naming who
+you are quoting and what they said; type your reply and send, and the quote goes
+with it:
+
+```
+  ❝ quoting Alice: can we ship friday? · esc drops it
+› yes, after CI is green
+```
+
+Rocket.Chat has no quote field. A quote is a permalink to the message, placed at
+the front of the reply as `[ ](https://server/channel/general?msg=…)`, which the
+server recognises and turns into a quote attachment for every client. rctui
+sends exactly that, so a quote from here reads as a quote in the web and mobile
+apps — and it keeps the link out of the box you are typing in, which is the only
+reason the quote is held in a banner rather than pasted into your draft.
+
+`esc` drops a pending quote and leaves your draft alone. Sending with nothing
+typed quotes the message on its own, which is a normal way to point at something
+someone said. Leaving the room, or opening a thread, drops the quote along with
+the draft it belonged to.
+
+Quotes coming the other way render as a `❝` line above the reply, and the
+permalink that produced them never reaches the screen:
+
+```
+Bob                                                          14:32
+  ❝ Alice: can we ship friday?
+  yes, after CI is green
+```
 
 ### Attachments and images
 

@@ -1157,3 +1157,70 @@ func rewindOneMigration(t *testing.T, path, undo string) {
 		t.Fatalf("rewind schema version: %v", err)
 	}
 }
+
+// A quote is an attachment with no file behind it, and the link back to what was
+// quoted is the only thing that tells it apart from an unfurled preview. Losing
+// it in the cache would turn every quote in the room's history into a 📎 line.
+func TestQuoteSurvivesTheRoundTrip(t *testing.T) {
+	s := openStore(t)
+	link := "https://chat.example.com/channel/general?msg=parent"
+	if err := s.SaveMessages([]rocket.Message{{
+		ID: "m1", RoomID: "r1", Msg: "[ ](" + link + ") sure", Timestamp: ts(time.Now()),
+		User: rocket.User{ID: "u1", Username: "bob"},
+		Attachments: []rocket.Attachment{{
+			AuthorName:  "Alice",
+			Text:        "can we ship friday?",
+			MessageLink: link,
+		}},
+	}}); err != nil {
+		t.Fatalf("SaveMessages: %v", err)
+	}
+
+	timeline, err := s.RoomTimeline("r1", 10)
+	if err != nil {
+		t.Fatalf("RoomTimeline: %v", err)
+	}
+	if len(timeline) != 1 || len(timeline[0].Attachments) != 1 {
+		t.Fatalf("got %d messages, want 1 carrying 1 attachment", len(timeline))
+	}
+
+	attachment := timeline[0].Attachments[0]
+	if !attachment.IsQuote() {
+		t.Error("IsQuote() = false, so the quote renders as a file")
+	}
+	if attachment.Title != "Alice" || attachment.Text != "can we ship friday?" {
+		t.Errorf("quote = %q / %q, want the author and what they said",
+			attachment.Title, attachment.Text)
+	}
+	// The text keeps its markup: an edit loads it back into the composer, and a
+	// quote stripped on the way through the cache would be dropped by that edit.
+	if timeline[0].Text != "[ ]("+link+") sure" {
+		t.Errorf("stored text = %q, want the permalink kept", timeline[0].Text)
+	}
+}
+
+// The room's type letter is what a permalink's route is built from, so it has to
+// come back out of the cache as well as the kind derived from it.
+func TestRoomTypeSurvivesTheRoundTrip(t *testing.T) {
+	s := openStore(t)
+	if err := s.SaveRooms([]rocket.Room{{ID: "r1", Type: "p", Name: "eng", TeamMain: true}}); err != nil {
+		t.Fatalf("SaveRooms: %v", err)
+	}
+	if err := s.SaveSubscriptions([]rocket.Subscription{
+		{RoomID: "r1", Type: "p", Name: "eng", Open: true},
+	}); err != nil {
+		t.Fatalf("SaveSubscriptions: %v", err)
+	}
+
+	room, found, err := s.Room("r1")
+	if err != nil || !found {
+		t.Fatalf("Room: %v, found %v", err, found)
+	}
+	if room.Type != "p" {
+		t.Errorf("Type = %q, want p", room.Type)
+	}
+	// A private team is KindTeam, which is exactly why the letter is kept.
+	if room.Kind != model.KindTeam {
+		t.Errorf("Kind = %v, want team", room.Kind)
+	}
+}

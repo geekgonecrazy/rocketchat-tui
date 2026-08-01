@@ -94,6 +94,11 @@ type ComposerState struct {
 	View       string
 	Prompt     string
 	ReplyingTo string
+	// Quoting is who and what the next message will quote, empty when nothing is
+	// quoted. It stacks with the thread banner rather than replacing it: a quote
+	// inside a thread is two facts about where the message is going, and dropping
+	// either would be dropping half the answer.
+	Quoting string
 	// AlsoToChannel is the state of the "also send to channel" toggle, shown on
 	// the thread banner. It only means anything while ReplyingTo is set.
 	AlsoToChannel bool
@@ -128,6 +133,10 @@ func Composer(theme Theme, state ComposerState) []string {
 			Truncate("  ✎ editing a sent message — enter saves, esc cancels", state.Width)))
 	case state.ReplyingTo != "":
 		lines = append(lines, theme.ThreadHint.Render(threadBanner(state)))
+	}
+
+	if state.Quoting != "" {
+		lines = append(lines, theme.Quote.Render(quoteBanner(state.Quoting, state.Width)))
 	}
 
 	if len(state.Attachments) > 0 {
@@ -168,6 +177,22 @@ func threadBanner(state ComposerState) string {
 	// Too narrow for both. A few cells of parent text would say little that the
 	// thread pane above does not already show; the checkbox has no such backup.
 	return Truncate("  ↳ thread · "+toggle, state.Width)
+}
+
+// quoteBanner is the "quoting X" line above the composer.
+//
+// How to drop the quote is part of the line rather than left to the help screen:
+// the quote was started with a key most people will have pressed by accident at
+// least once, and nothing else on screen says how to take it back.
+func quoteBanner(quoting string, width int) string {
+	const (
+		head   = "  ❝ quoting "
+		escape = " · esc drops it"
+	)
+	if room := width - Width(head) - Width(escape); room >= 8 {
+		return Pad(head+Truncate(quoting, room)+escape, width)
+	}
+	return Pad(Truncate(head+quoting, width), width)
 }
 
 // attachmentLine renders the queued files on one line.
@@ -315,6 +340,7 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"ctrl+t", "threads in this room — works while typing"},
 		{"alt+c", "in a thread: also send your reply to the channel"},
 		{"r", "react to the selected message"},
+		{"\"", "quote the selected message in your next one"},
 		{"alt+enter", "newline in the composer"},
 		{"click", "a room, a message, a ↳ replies line, or a reaction to toggle it"},
 		{"wheel", "scroll the pane under the pointer"},
@@ -385,6 +411,21 @@ func HelpOverlay(theme Theme, width int) []string {
 			"alt+c ticks \"also to channel\" on the composer: what you send then", max(1, width-4))),
 		"  "+theme.Muted.Render(Truncate(
 			"shows in the room as well, marked ↱ with the thread it came from.", max(1, width-4))),
+	)
+
+	lines = append(lines,
+		"",
+		theme.Title.Render("  Quoting"),
+		"  "+theme.Muted.Render(Truncate(
+			"Select a message and press \" — a banner above the composer names", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"who you are quoting, and what you send next carries their message", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"with it. esc drops the quote, and sending with nothing typed quotes", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"them without adding anything. Quotes render as ❝ lines here and as", max(1, width-4))),
+		"  "+theme.Muted.Render(Truncate(
+			"ordinary quotes in every other Rocket.Chat client.", max(1, width-4))),
 	)
 
 	lines = append(lines,

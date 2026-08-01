@@ -640,3 +640,46 @@ func TestEndToEndLeaveDropsTheRoomFromTheSidebar(t *testing.T) {
 	r.waitForOutput("over here")
 	r.quit()
 }
+
+// Quoting end to end: the client sends the permalink the server needs in order
+// to build a quote attachment, because that is the only form a quote has.
+func TestEndToEndQuotesAMessage(t *testing.T) {
+	server := fakerc.New(t)
+	base := time.Now().Add(-time.Hour)
+	server.AddRoom("room-1", "c", "general", nil)
+	server.AddSubscription("room-1", "c", "general", 0, 0, base, nil)
+	server.AddMessage("m1", "room-1", "alice", "can we ship friday?", base, nil)
+
+	r := newRunner(t, server, t.TempDir(), true)
+	r.waitForOutput("Rocket.Chat")
+	r.send(tea.KeyMsg{Type: tea.KeyCtrlT})
+	r.sendRunes(fakerc.AuthToken)
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	r.waitForOutput("can we ship friday?")
+
+	// Focus the messages pane, select the message, and quote it.
+	r.send(tea.KeyMsg{Type: tea.KeyTab}) // composer -> rooms
+	r.send(tea.KeyMsg{Type: tea.KeyTab}) // rooms -> messages
+	r.send(tea.KeyMsg{Type: tea.KeyUp})  // select the newest
+	r.sendRunes("\"")
+
+	r.waitForOutput("quoting")
+
+	// The quote is not typed into the composer: what the user writes is theirs.
+	r.sendRunes("yes, after CI")
+	r.waitForOutput("yes, after CI")
+	r.send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	want := "[ ](" + server.URL + "/channel/general?msg=m1) yes, after CI"
+	waitUntil(t, "the quote was posted as a permalink", func() bool {
+		for _, sent := range server.SentMessages() {
+			if sent.Text == want && sent.RoomID == "room-1" {
+				return true
+			}
+		}
+		return false
+	})
+
+	r.quit()
+}

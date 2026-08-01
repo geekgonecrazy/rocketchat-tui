@@ -112,8 +112,18 @@ type chatModel struct {
 	showHelp  bool
 	settings  settingsPane
 
-	username    string
+	username string
+	// serverURL is the full base URL, serverLabel the host on its own. Both are
+	// kept because they answer different questions: the header shows where you
+	// are, and a permalink has to be addressable.
+	serverURL   string
 	serverLabel string
+
+	// quote is the message the next send will quote, empty when none. Rocket.Chat
+	// has no quote field — the quote is a permalink in the text — so this is held
+	// until send rather than typed into the composer, which keeps a URL out of
+	// what the user is writing. See model.QuoteMarkup.
+	quote model.Message
 
 	composer textarea.Model
 	focus    focusArea
@@ -158,7 +168,7 @@ type chatModel struct {
 }
 
 func newChatModel(core *app.Core, cfg *config.Config, notifier *notify.Notifier,
-	theme render.Theme, username, serverLabel string) chatModel {
+	theme render.Theme, username, serverURL string) chatModel {
 	composer := textarea.New()
 	composer.Placeholder = "Write a message…"
 	composer.Prompt = ""
@@ -182,7 +192,8 @@ func newChatModel(core *app.Core, cfg *config.Config, notifier *notify.Notifier,
 		commands:       app.ClientCommands(),
 		theme:          theme,
 		username:       username,
-		serverLabel:    serverLabel,
+		serverURL:      serverURL,
+		serverLabel:    shortServer(serverURL),
 		composer:       composer,
 		focus:          focusRooms,
 		msgCursor:      -1,
@@ -220,6 +231,9 @@ func (m chatModel) composerHeight() int {
 	lines := 1 + m.composer.Height() // divider + input
 	if m.editing() || (m.threadID != "" && m.mode == bodyThread) {
 		lines++ // edit banner, or thread context line
+	}
+	if m.quoting() {
+		lines++ // quote banner
 	}
 	if len(m.uploads) > 0 {
 		lines++ // queued attachments
@@ -423,6 +437,7 @@ func (m chatModel) handleCoreEvent(event app.Event) (chatModel, tea.Cmd) {
 
 	case app.SessionReady:
 		m.username = e.Username
+		m.serverURL = e.ServerURL
 		m.serverLabel = shortServer(e.ServerURL)
 	}
 	return m, nil
@@ -505,6 +520,7 @@ func (m chatModel) View() string {
 		View:          m.composer.View(),
 		Prompt:        m.composerPrompt(),
 		ReplyingTo:    m.threadContext(),
+		Quoting:       m.quoteContext(),
 		AlsoToChannel: m.alsoToChannel,
 		Editing:       m.editing(),
 		ReadOnly:      m.room.ReadOnly,
@@ -542,11 +558,36 @@ func (m chatModel) composerPrompt() string {
 	return "  "
 }
 
+// quoting reports whether a quote is waiting to go out with the next message.
+func (m chatModel) quoting() bool { return m.quote.ID != "" }
+
+// quoteContext is the banner line's subject: who is being quoted and what they
+// said, reduced to one line the way the thread banner is.
+func (m chatModel) quoteContext() string {
+	if !m.quoting() {
+		return ""
+	}
+	// Quoting a reply that was itself a quote: what is being quoted is what that
+	// message said, not the permalink it said it with.
+	preview := strings.ReplaceAll(model.StripQuoteMarkup(m.quote.Text), "\n", " ")
+	if preview == "" {
+		preview = m.quote.SystemText()
+	}
+	author := m.quote.Author
+	if author == "" {
+		author = m.quote.Username
+	}
+	if author == "" {
+		return preview
+	}
+	return author + ": " + preview
+}
+
 func (m chatModel) threadContext() string {
 	if m.mode != bodyThread || m.threadParent.ID == "" {
 		return ""
 	}
-	preview := strings.ReplaceAll(m.threadParent.Text, "\n", " ")
+	preview := strings.ReplaceAll(model.StripQuoteMarkup(m.threadParent.Text), "\n", " ")
 	if preview == "" {
 		preview = m.threadParent.SystemText()
 	}
@@ -585,7 +626,7 @@ func (m chatModel) statusBar() string {
 		connection = "connected"
 	}
 
-	hints := "enter thread · r react · ctrl+t threads · ? help"
+	hints := "enter thread · r react · \" quote · ctrl+t threads · ? help"
 	switch {
 	case m.settings.open:
 		hints = "↑↓ move · enter toggle · esc close"
@@ -597,6 +638,10 @@ func (m chatModel) statusBar() string {
 		// What to do about the queue displaces the general hints: it is the one
 		// thing on screen the user has no other way of learning how to undo.
 		hints = "enter send with files · ctrl+o attach another · ctrl+x remove last"
+	case m.quoting():
+		// A pending quote changes what enter sends, so what it will do and how to
+		// take it back displace the general hints.
+		hints = "enter send with the quote · esc drop it · \" quote another"
 	case m.cmdPicker.active():
 		hints = "tab complete · enter run · esc dismiss"
 	case m.focus == focusComposer:

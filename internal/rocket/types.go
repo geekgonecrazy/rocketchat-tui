@@ -153,6 +153,10 @@ type Reaction struct {
 // An uploaded file sets TitleLinkDownload and carries its own MIME type and
 // size; a link preview (an OG card the server unfurled) sets neither, which is
 // how the two are told apart.
+//
+// MessageLink marks the third kind: a quote, which the server builds when a
+// message links to another message on the same site. It is neither a file nor a
+// preview — the "attachment" is somebody else's words.
 type Attachment struct {
 	Title             string `json:"title"`
 	TitleLink         string `json:"title_link"`
@@ -163,6 +167,7 @@ type Attachment struct {
 	ImageType         string `json:"image_type"`
 	ImageSize         int64  `json:"image_size"`
 	AuthorName        string `json:"author_name"`
+	MessageLink       string `json:"message_link"`
 	Type              string `json:"type"`
 }
 

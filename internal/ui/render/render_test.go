@@ -837,3 +837,112 @@ func TestCommandPickerBoundsTheUsageColumn(t *testing.T) {
 		t.Errorf("row is %d cells wide, want 40", Width(lines[0]))
 	}
 }
+
+// A quote arrives as an attachment the server built from the permalink in the
+// text. Both halves have to be handled: the quote is drawn as speech above the
+// reply, and the markup that produced it never reaches the screen.
+func TestTimelineRendersQuotesAboveTheReply(t *testing.T) {
+	link := "https://chat.example.com/channel/general?msg=parent"
+	view := Timeline(plainTheme(), TimelineState{
+		Messages: []model.Message{{
+			ID: "reply", Username: "bob", Author: "Bob",
+			Text: "[ ](" + link + ") sure, let's do that",
+			At:   time.Now(),
+			Attachments: []model.Attachment{{
+				Title: "Alice", Text: "can we ship friday?", MessageLink: link,
+			}},
+		}},
+		Width:  60,
+		Cursor: -1,
+	})
+
+	rendered := strings.Join(view.Lines, "\n")
+	if !strings.Contains(rendered, "❝ Alice: can we ship friday?") {
+		t.Errorf("quote not rendered as speech:\n%s", rendered)
+	}
+	if strings.Contains(rendered, link) || strings.Contains(rendered, "[ ]") {
+		t.Errorf("quote markup leaked into the timeline:\n%s", rendered)
+	}
+	// A quote is not a file, so it must not be offered as one to v/s/o.
+	if strings.Contains(rendered, "📎") {
+		t.Errorf("quote rendered as an attachment:\n%s", rendered)
+	}
+
+	quoteLine, replyLine := -1, -1
+	for i, line := range view.Lines {
+		if strings.Contains(line, "❝ Alice") {
+			quoteLine = i
+		}
+		if strings.Contains(line, "sure, let's do that") {
+			replyLine = i
+		}
+	}
+	if quoteLine < 0 || replyLine < 0 || quoteLine > replyLine {
+		t.Errorf("quote at line %d, reply at line %d — the quote must come first:\n%s",
+			quoteLine, replyLine, rendered)
+	}
+}
+
+// Quoting without adding anything is a normal thing to do, and it must not draw
+// a blank line where the missing comment would have been.
+func TestTimelineDrawsNoBodyForAQuoteWithNothingAdded(t *testing.T) {
+	link := "https://chat.example.com/channel/general?msg=parent"
+	view := Timeline(plainTheme(), TimelineState{
+		Messages: []model.Message{{
+			ID: "reply", Username: "bob", Author: "Bob", Text: "[ ](" + link + ") ",
+			At: time.Now(),
+			Attachments: []model.Attachment{{
+				Title: "Alice", Text: "can we ship friday?", MessageLink: link,
+			}},
+		}},
+		Width:  60,
+		Cursor: -1,
+	})
+
+	for i, line := range view.Lines {
+		if strings.TrimSpace(line) == "" {
+			t.Errorf("blank line %d where the reply would have been:\n%s",
+				i, strings.Join(view.Lines, "\n"))
+		}
+	}
+}
+
+func TestComposerQuoteBannerStacksWithTheThreadBanner(t *testing.T) {
+	lines := Composer(plainTheme(), ComposerState{
+		Width:      70,
+		View:       "sure",
+		ReplyingTo: "Alice: ship it?",
+		Quoting:    "Bob: only if CI is green",
+	})
+
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"replying in thread", "❝ quoting Bob: only if CI is green", "esc drops it"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("composer missing %q:\n%s", want, joined)
+		}
+	}
+	for _, line := range lines {
+		if Width(line) > 70 {
+			t.Errorf("line is %d cells wide, want <= 70: %q", Width(line), line)
+		}
+	}
+}
+
+// The banner has to survive a narrow terminal: what is quoted can be truncated,
+// but how to drop it is the part the user cannot guess.
+func TestComposerQuoteBannerStaysWithinANarrowWidth(t *testing.T) {
+	lines := Composer(plainTheme(), ComposerState{
+		Width:   30,
+		View:    "sure",
+		Quoting: strings.Repeat("a very long quoted message ", 5),
+	})
+
+	for _, line := range lines {
+		if Width(line) > 30 {
+			t.Errorf("line is %d cells wide, want <= 30: %q", Width(line), line)
+		}
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "❝ quoting") {
+		t.Errorf("banner lost entirely:\n%s", strings.Join(lines, "\n"))
+	}
+}

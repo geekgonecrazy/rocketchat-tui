@@ -172,8 +172,18 @@ func (c *Core) alreadyNotified(messageID string) bool {
 // notificationText is what to show as the body: the message, or a description of
 // what came instead when there is no text to show.
 func notificationText(msg rocket.Message) string {
-	if text := strings.TrimSpace(msg.Msg); text != "" {
+	// The permalink a quote is made of is markup rather than words, and a
+	// notification has no room to render it as anything else.
+	if text := strings.TrimSpace(model.StripQuoteMarkup(msg.Msg)); text != "" {
 		return text
+	}
+	if len(msg.Attachments) > 0 && msg.Attachments[0].MessageLink != "" {
+		// A quote with nothing added to it. Saying "sent a file" would be wrong
+		// twice over: no file, and the point is whose message was quoted.
+		if who := strings.TrimSpace(msg.Attachments[0].AuthorName); who != "" {
+			return "quoted " + who
+		}
+		return "quoted a message"
 	}
 	switch len(msg.Attachments) {
 	case 0:

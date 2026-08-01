@@ -59,8 +59,14 @@ func (k Kind) Sigil() string {
 
 // Room is one row in the sidebar plus the metadata the header needs.
 type Room struct {
-	ID           string
-	Kind         Kind
+	ID   string
+	Kind Kind
+	// Type is the raw Rocket.Chat type letter. Kind is what the UI groups and
+	// labels by, but it cannot produce the room's web route: a private team and a
+	// private discussion are both "p" on the wire while being KindTeam and
+	// KindDiscussion here, and a permalink to the wrong route opens the wrong
+	// room. So the letter is kept alongside the kind rather than derived from it.
+	Type         string
 	Name         string // slug, empty for some DMs
 	DisplayName  string // what to render
 	Topic        string
@@ -138,6 +144,10 @@ func (r Reaction) Count() int { return len(r.Usernames) }
 // to download (usually server-relative, so it needs resolving against the
 // server URL), and Upload separates a real uploaded file from a link preview
 // the server unfurled — only the former is ours to save or open.
+// A quote is the odd one out: it describes no file at all, so Source is empty
+// and MessageLink points back at the message being quoted. Title carries who
+// said it and Text what they said, which is why the timeline renders it as a
+// line of speech rather than as something to open.
 type Attachment struct {
 	Title string
 	Text  string
@@ -147,7 +157,12 @@ type Attachment struct {
 	MIME   string
 	Size   int64
 	Upload bool
+
+	MessageLink string
 }
+
+// IsQuote reports whether this attachment is another message being quoted.
+func (a Attachment) IsQuote() bool { return a.MessageLink != "" }
 
 // imageExtensions backs IsImage when the server did not declare a MIME type,
 // which happens on older uploads and on unfurled remote images.

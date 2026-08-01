@@ -277,6 +277,11 @@ func (m chatModel) handleMessagesKey(pressed string) (chatModel, tea.Cmd) {
 		return m.toggleThreadList()
 	case "r", "+":
 		return m.openReactPicker()
+	case "\"":
+		// The quote character itself, not a letter: "q" in this pane already
+		// quits, and a key that quotes when you hit it and quits when you miss
+		// the shift is not a key worth having.
+		return m.quoteSelected()
 	case "v":
 		return m.requestAttachment(actionView)
 	case "s":
@@ -306,6 +311,12 @@ func (m chatModel) handleComposerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		// close the thread the user is editing inside.
 		if m.editing() {
 			return m.cancelEdit()
+		}
+		// Then the quote, for the same reason: esc undoes the last thing taken
+		// on, and leaving the composer would strand a quote the user has just
+		// changed their mind about.
+		if m.quoting() {
+			return m.dropQuote()
 		}
 		if m.mode == bodyThread {
 			return m.showTimeline()
@@ -400,6 +411,9 @@ func (m *chatModel) openRoom(roomID string) tea.Cmd {
 	m.msgCursor = -1
 	m.cursorMsgID = ""
 	m.editID, m.editDraft, m.editPrevCursorID = "", "", ""
+	// The quote belonged to the conversation being left, and a permalink into it
+	// would be a quote of a message nobody here can see.
+	m.quote = model.Message{}
 	m.scroll = 0
 	m.pinnedToBottom = true
 	m.jumpToUnread = true
@@ -445,12 +459,21 @@ func (m chatModel) send() (chatModel, tea.Cmd) {
 	}
 
 	text := strings.TrimSpace(m.composer.Value())
-	if text == "" && len(m.uploads) == 0 {
+	// A quote on its own is a message: pointing at what somebody said, with
+	// nothing to add, is a normal thing to do in a chat.
+	if text == "" && len(m.uploads) == 0 && !m.quoting() {
 		return m, nil
 	}
 	threadID := ""
 	if m.mode == bodyThread {
 		threadID = m.threadID
+	}
+
+	// The quote goes in front of the text as a permalink, which is the only form
+	// Rocket.Chat has for one: the server recognises the link and hands every
+	// client back a quote attachment. See model.QuoteMarkup.
+	if m.quoting() {
+		text = strings.TrimSpace(model.QuoteMarkup(m.serverURL, m.room, m.quote.ID) + text)
 	}
 
 	m.core.Send(app.SendRequest{
@@ -460,6 +483,7 @@ func (m chatModel) send() (chatModel, tea.Cmd) {
 		AlsoSendToChannel: threadID != "" && m.alsoToChannel,
 		Uploads:           m.uploads,
 	})
+	m.quote = model.Message{}
 	m.uploads = nil
 	m.composer.Reset()
 	m.composer.SetHeight(1)
@@ -532,7 +556,8 @@ func (m chatModel) openSelectedThread() (chatModel, tea.Cmd) {
 	m.composer.Focus()
 	m.composer.Reset()
 	// The draft is discarded on the way in, and the files attached to it go with
-	// it: they were meant for the timeline, not this thread.
+	// it — and the quote, which was part of the same unsent message.
+	m.quote = model.Message{}
 	m.uploads = nil
 	m.attach = attachPrompt{}
 	m.core.OpenThread(m.activeRoom, threadID)
@@ -634,22 +659,81 @@ func (m chatModel) openReactPicker() (chatModel, tea.Cmd) {
 
 // selectedMessage is the id the cursor is on, in whichever pane is showing.
 func (m chatModel) selectedMessage() string {
+	target, _ := m.selectedTarget()
+	return target.ID
+}
+
+// selectedTarget is the message the cursor is on, in whichever pane is showing,
+// reporting false when nothing is selected.
+//
+// Inside a thread with no reply selected the target is the parent: that is the
+// message the pane is about, and it is what reacting to "the selection" has
+// always meant here. Its id is known before the parent itself has loaded, so the
+// fallback carries the id alone rather than nothing.
+func (m chatModel) selectedTarget() (model.Message, bool) {
 	switch m.mode {
 	case bodyThread:
 		if m.threadCursor >= 0 && m.threadCursor < len(m.threadReplies) {
-			return m.threadReplies[m.threadCursor].ID
+			return m.threadReplies[m.threadCursor], true
 		}
-		return m.threadID
+		if m.threadParent.ID != "" {
+			return m.threadParent, true
+		}
+		return model.Message{ID: m.threadID}, m.threadID != ""
 	case bodyThreadList:
 		if m.threadsIndex >= 0 && m.threadsIndex < len(m.threads) {
-			return m.threads[m.threadsIndex].ID
+			return m.threads[m.threadsIndex], true
 		}
 	default:
 		if m.msgCursor >= 0 && m.msgCursor < len(m.messages) {
-			return m.messages[m.msgCursor].ID
+			return m.messages[m.msgCursor], true
 		}
 	}
-	return ""
+	return model.Message{}, false
+}
+
+// quoteSelected marks the selected message as the one the next send will quote.
+//
+// Nothing is typed into the composer: the quote is a permalink, and a URL in the
+// box the user is writing in would be in the way of the writing. The banner says
+// what is quoted, and send() puts the link in front of the text.
+func (m chatModel) quoteSelected() (chatModel, tea.Cmd) {
+	target, ok := m.selectedTarget()
+	if !ok {
+		return m.notify("select a message first", false)
+	}
+	if m.room.ReadOnly {
+		return m.notify("this room is read-only", false)
+	}
+	// An edit rewrites a message that is already posted; a quote belongs to one
+	// that is not written yet. Taking both at once would mean deciding which of
+	// them enter is for.
+	if m.editing() {
+		return m.notify("finish the edit first — esc cancels it", false)
+	}
+	if target.IsSystem() {
+		return m.notify("that is a system message, not something to quote", false)
+	}
+	if model.MessageLink(m.serverURL, m.room, target.ID) == "" {
+		// No server address, or a room we know no name or id for. Sending the
+		// message without the quote would look like it worked.
+		return m.notify("no link to that message — nothing to quote with", true)
+	}
+
+	m.quote = target
+	m.focus = focusComposer
+	// The banner takes a line off the body, so the timeline has to be re-laid out
+	// before it is drawn into a smaller pane.
+	m.rebuildBody()
+	cmd := m.syncComposerFocus()
+	return m, cmd
+}
+
+// dropQuote abandons a pending quote, leaving the draft it was going to ride on.
+func (m chatModel) dropQuote() (chatModel, tea.Cmd) {
+	m.quote = model.Message{}
+	m.rebuildBody()
+	return m, nil
 }
 
 // handleReactPickerKey drives the modal picker.

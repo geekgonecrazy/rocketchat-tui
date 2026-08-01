@@ -79,12 +79,13 @@ func FromRocketMessage(src rocket.Message, selfID, selfUsername string) Message 
 // sees: an image whose Source is missing is neither drawable nor fetchable.
 func FromRocketAttachment(attachment rocket.Attachment) (Attachment, bool) {
 	converted := Attachment{
-		Title:  firstNonEmpty(attachment.Title, attachment.AuthorName),
-		Text:   firstNonEmpty(attachment.Text, attachment.Description),
-		Link:   firstNonEmpty(attachment.TitleLink, attachment.ImageURL),
-		MIME:   attachment.ImageType,
-		Size:   attachment.ImageSize,
-		Upload: attachment.TitleLinkDownload,
+		Title:       firstNonEmpty(attachment.Title, attachment.AuthorName),
+		Text:        firstNonEmpty(attachment.Text, attachment.Description),
+		Link:        firstNonEmpty(attachment.TitleLink, attachment.ImageURL),
+		MIME:        attachment.ImageType,
+		Size:        attachment.ImageSize,
+		Upload:      attachment.TitleLinkDownload,
+		MessageLink: attachment.MessageLink,
 	}
 	// ImageURL is the renderable bytes and wins; TitleLink is the download
 	// route for an upload the server sent no preview for (a PDF, a zip).
@@ -114,6 +115,7 @@ func MergeRoom(room *rocket.Room, sub *rocket.Subscription) Room {
 	var out Room
 	if room != nil {
 		out.ID = room.ID
+		out.Type = room.Type
 		out.Name = room.Name
 		out.DisplayName = firstNonEmpty(room.DisplayName, room.Name)
 		out.Topic = room.Topic
@@ -130,6 +132,9 @@ func MergeRoom(room *rocket.Room, sub *rocket.Subscription) Room {
 	}
 	if sub != nil {
 		out.ID = sub.RoomID
+		if out.Type == "" {
+			out.Type = sub.Type
+		}
 		if out.DisplayName == "" {
 			out.DisplayName = firstNonEmpty(sub.DisplayName, sub.Name)
 		}

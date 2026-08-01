@@ -48,7 +48,7 @@ func newTestChatWithTerminal(t *testing.T) (chatModel, *bytes.Buffer) {
 	// go to the buffer, so nothing reaches the test runner's output.
 	terminal := &bytes.Buffer{}
 	m := newChatModel(core, cfg, notify.New(terminal, true),
-		render.DefaultTheme(), "tester", "chat.example.com")
+		render.DefaultTheme(), "tester", "https://chat.example.com")
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return m, terminal
 }
@@ -1520,5 +1520,189 @@ func TestReadOnlyRoomHasNothingToEdit(t *testing.T) {
 	m, _ = m.Update(press("up"))
 	if m.editing() {
 		t.Error("a read-only room accepts no edits, so it should offer none")
+	}
+}
+
+// ---- quoting ----------------------------------------------------------------
+
+// quotable is a room with two messages in it and the messages pane focused, with
+// the newest one selected — the state a quote starts from.
+func quotable(t *testing.T) chatModel {
+	t.Helper()
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID: "r1",
+		Room:   model.Room{ID: "r1", Type: "c", Name: "general", DisplayName: "general", Kind: model.KindChannel},
+		Messages: []model.Message{
+			{ID: "m1", Username: "bob", Author: "Bob", Text: "morning", At: time.Now().Add(-time.Hour)},
+			{ID: "m2", Username: "alice", Author: "Alice", Text: "can we ship friday?",
+				At: time.Now().Add(-time.Minute)},
+		},
+	})
+	m.focus = focusMessages
+	m, _ = m.Update(press("k")) // select the newest
+	return m
+}
+
+func TestQuoteBannerNamesWhoIsBeingQuoted(t *testing.T) {
+	m := quotable(t)
+
+	m, _ = m.Update(press("\""))
+	if m.quote.ID != "m2" {
+		t.Fatalf("quote = %q, want m2", m.quote.ID)
+	}
+	// Quoting is the start of writing a reply, so the composer takes over.
+	if m.focus != focusComposer {
+		t.Errorf("focus = %v, want the composer", m.focus)
+	}
+	view := m.View()
+	for _, want := range []string{"❝ quoting", "Alice: can we ship friday?", "esc drops it"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("quote banner missing %q:\n%s", want, view)
+		}
+	}
+
+	// A second quote replaces the first rather than stacking.
+	m.focus = focusMessages
+	m, _ = m.Update(press("k"))
+	m, _ = m.Update(press("\""))
+	if m.quote.ID != "m1" {
+		t.Errorf("quote = %q, want the newly selected m1", m.quote.ID)
+	}
+}
+
+func TestQuoteIsDroppedByEsc(t *testing.T) {
+	m := quotable(t)
+	m, _ = m.Update(press("\""))
+
+	// Something is typed first: dropping the quote must not take the draft with
+	// it, or esc would cost the user a sentence.
+	for _, r := range "sure" {
+		m, _ = m.Update(press(string(r)))
+	}
+	m, _ = m.Update(press("esc"))
+
+	if m.quoting() {
+		t.Error("esc did not drop the quote")
+	}
+	if m.composer.Value() != "sure" {
+		t.Errorf("composer = %q, want the draft left alone", m.composer.Value())
+	}
+	if strings.Contains(m.View(), "❝ quoting") {
+		t.Error("the banner outlived the quote")
+	}
+	// The composer keeps focus: esc dropped the quote, and that is all it did.
+	if m.focus != focusComposer {
+		t.Errorf("focus = %v, want the composer", m.focus)
+	}
+}
+
+func TestQuoteIsDroppedWhenTheConversationChanges(t *testing.T) {
+	m := quotable(t)
+	m, _ = m.Update(press("\""))
+
+	moved := m
+	cmd := moved.openRoom("r3")
+	_ = cmd
+	if moved.quoting() {
+		t.Error("a quote survived into another room, where its message is not")
+	}
+
+	// The same on the way into a thread, which discards the draft it belonged to.
+	m.focus = focusMessages
+	m, _ = m.Update(press("enter"))
+	if m.quoting() {
+		t.Error("a quote survived into a thread, where the draft did not")
+	}
+}
+
+func TestQuoteRefusesWhatCannotBeQuoted(t *testing.T) {
+	// A system message is the server talking; there is no message to point at.
+	m := newTestChat(t)
+	m = event(m, app.RoomsUpdated{Rooms: sampleRooms()})
+	m = event(m, app.TimelineUpdated{
+		RoomID: "r1",
+		Room:   model.Room{ID: "r1", Type: "c", Name: "general", Kind: model.KindChannel},
+		Messages: []model.Message{
+			{ID: "s1", Username: "carol", Author: "Carol", SystemType: "uj", At: time.Now()},
+		},
+	})
+	m.focus = focusMessages
+	m, _ = m.Update(press("k"))
+	m, _ = m.Update(press("\""))
+	if m.quoting() {
+		t.Error("quoted a system message")
+	}
+	if !strings.Contains(m.notice, "system message") {
+		t.Errorf("notice = %q, want an explanation", m.notice)
+	}
+
+	// A read-only room has nowhere to send the quote, so it refuses at the point
+	// the user asks rather than at the point they press enter.
+	readOnly := quotable(t)
+	readOnly = event(readOnly, app.TimelineUpdated{
+		RoomID: "r1",
+		Room:   model.Room{ID: "r1", Type: "c", Name: "general", Kind: model.KindChannel, ReadOnly: true},
+		Messages: []model.Message{
+			{ID: "m2", Username: "alice", Author: "Alice", Text: "can we ship friday?", At: time.Now()},
+		},
+	})
+	readOnly.focus = focusMessages
+	readOnly, _ = readOnly.Update(press("\""))
+	if readOnly.quoting() {
+		t.Error("quoted into a room that accepts no messages")
+	}
+	if !strings.Contains(readOnly.notice, "read-only") {
+		t.Errorf("notice = %q, want an explanation", readOnly.notice)
+	}
+}
+
+// An edit and a quote both claim the composer and both claim enter, so the two
+// cannot be pending at once.
+func TestQuoteRefusesWhileEditing(t *testing.T) {
+	m := composing(t)
+	m, _ = m.Update(press("up"))
+	if !m.editing() {
+		t.Fatal("expected an edit in progress")
+	}
+
+	m.focus = focusMessages
+	m, _ = m.Update(press("\""))
+	if m.quoting() {
+		t.Error("started a quote while a sent message was being rewritten")
+	}
+	if !strings.Contains(m.notice, "finish the edit") {
+		t.Errorf("notice = %q, want an explanation", m.notice)
+	}
+}
+
+// Quoting inside a thread quotes the reply under the cursor, and the banner
+// stacks with the thread's rather than replacing it: both say where the message
+// is going.
+func TestQuoteInsideAThreadKeepsBothBanners(t *testing.T) {
+	m := quotable(t)
+	m, _ = m.Update(press("enter"))
+	m = event(m, app.ThreadUpdated{
+		RoomID:   "r1",
+		ThreadID: "m2",
+		Parent:   model.Message{ID: "m2", Username: "alice", Author: "Alice", Text: "can we ship friday?", At: time.Now()},
+		Replies: []model.Message{
+			{ID: "t1", Username: "bob", Author: "Bob", Text: "only if CI is green", At: time.Now()},
+		},
+	})
+	m.focus = focusMessages
+	m, _ = m.Update(press("k"))
+	m, _ = m.Update(press("\""))
+
+	if m.quote.ID != "t1" {
+		t.Fatalf("quote = %q, want the selected reply t1", m.quote.ID)
+	}
+	view := m.View()
+	if !strings.Contains(view, "replying in thread") {
+		t.Errorf("thread banner lost to the quote banner:\n%s", view)
+	}
+	if !strings.Contains(view, "Bob: only if CI is green") {
+		t.Errorf("quote banner missing:\n%s", view)
 	}
 }
