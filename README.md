@@ -1,5 +1,8 @@
 # rctui
 
+[**Browse the Atomic provenance**](https://atomic-viewer.aaronogle.dev/index.html?org=aaron&workspace=clis&project=rocketchat-tui)
+· [**Demo: using Atomic with provenance**](https://youtu.be/8CQusoHSXbs)
+
 A terminal client for Rocket.Chat, written in Go with
 [Bubbletea](https://github.com/charmbracelet/bubbletea) and
 [Lipgloss](https://github.com/charmbracelet/lipgloss).
