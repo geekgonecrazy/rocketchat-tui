@@ -510,10 +510,10 @@ func TestEndToEndExpiredSessionReturnsToLoginWithoutQuitting(t *testing.T) {
 	second.quit()
 }
 
-// Editing goes the whole way round: the composer recalls a message the user
-// sent, the correction reaches chat.update, and the timeline redraws from the
-// server's copy — "(edited)" included.
-func TestEndToEndEditsTheLastMessageWithUpArrow(t *testing.T) {
+// Editing goes the whole way round: ↑ steps into the history, e loads the
+// message the user sent, the correction reaches chat.update, and the timeline
+// redraws from the server's copy — "(edited)" included.
+func TestEndToEndEditsTheSelectedMessage(t *testing.T) {
 	server := fakerc.New(t)
 	lastSeen := time.Now().Add(-time.Hour)
 	server.AddRoom("room-1", "c", "general", nil)
@@ -535,8 +535,10 @@ func TestEndToEndEditsTheLastMessageWithUpArrow(t *testing.T) {
 		return len(server.SentMessages()) == 1
 	})
 
-	// ↑ in the empty composer pulls our own message back, not alice's.
+	// ↑ in the empty composer steps into the history and lands on the newest
+	// message — ours, not alice's — and e pulls it back into the composer.
 	r.send(tea.KeyMsg{Type: tea.KeyUp})
+	r.sendRunes("e")
 	r.waitForOutput("editing a sent message")
 
 	// Rewrite it and save.

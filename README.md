@@ -45,8 +45,8 @@ atomic change -a <hash>     # AI attestation: vendor, model, tokens, cost
   to it when you open a room
 - Live typing indicators, sent and received the way the web client does it
 - Thread view: browse a room's threads, read a thread, and reply into it
-- Fix a typo: `↑` in an empty composer brings your last message back to edit,
-  again for the one before, staying inside whatever you are looking at
+- Fix a typo: `↑` in an empty composer steps back into the history, `e` loads
+  the message you land on for editing, staying inside whatever you are looking at
 - Emoji: shortcodes render as glyphs, `:jo` pops up an autocomplete while you
   type, and any message can be reacted to
 - Quote a message with `"` — it goes out as the permalink Rocket.Chat expects,
@@ -118,7 +118,8 @@ draft at `$XDG_DATA_HOME/rctui/compose.md`.
 | `tab` / `shift+tab` | Move focus: rooms → messages → composer |
 | `↑ ↓` or `k j` | Move within the focused pane |
 | `enter` | Rooms: open · Messages: open or start a thread · Composer: send |
-| `↑` (empty composer) | Edit your last message; again for the one before, `↓` forward |
+| `↑` (empty composer) | Step back into the message history |
+| `e` | Edit the selected message, if it is yours; `↑`/`↓` walk to another |
 | `ctrl+t` | Thread list for this room — works while typing |
 | `alt+c` | In a thread: also send your reply to the channel |
 | `r` | React to the selected message |
@@ -137,7 +138,7 @@ draft at `$XDG_DATA_HOME/rctui/compose.md`.
 | `ctrl+o` | Attach a file to send with your message |
 | `ctrl+x` | Remove the last file you attached |
 | `ctrl+g` | Write your message in `$EDITOR` |
-| `esc` | Close thread / clear filter / leave the composer |
+| `esc` | Close thread / clear filter / back to the composer |
 | `ctrl+r` | Resync now |
 | `ctrl+l` | Mark the current room read |
 | `,` | Settings: desktop notifications and sound (`/settings` from the composer) |
@@ -429,17 +430,23 @@ thread the same reply is marked `↱ also sent to the channel`.
 
 ### Editing what you sent
 
-With the composer empty, `↑` loads your most recent message into it and marks it
-in the timeline. `↑` again steps further back through your own messages, `↓`
-comes forward, and past the newest it drops out of edit mode and gives you back
-whatever you had typed. `enter` saves, `esc` leaves the message alone.
+Editing starts from the messages pane: `↑` in an empty composer steps back into
+the history, and `e` on one of your own messages loads it into the composer and
+marks it in the timeline. `enter` saves, `esc` leaves the message alone and puts
+your draft and your place back.
 
-The gesture only ever offers messages from the context in front of you: in a
-thread it walks that thread's replies and its parent, never the channel's other
-messages, because the thread's composer posts into the thread. It also only
-offers your own messages, and only ones currently loaded — not something ten
-pages back that you cannot see. A draft in the composer is left alone: `↑` moves
-the cursor then, as it does inside a multi-line message being edited.
+While an edit is loaded, `↑` steps further back through your own messages and
+`↓` comes forward; past the newest it drops out of edit mode and gives you back
+whatever you had typed. That walk only ever offers messages from the context in
+front of you: in a thread it walks that thread's replies and its parent, never
+the channel's other messages, because the thread's composer posts into the
+thread. It also only offers your own messages, and only ones currently loaded —
+not something ten pages back that you cannot see. Inside a multi-line message
+the arrows move the cursor as usual; only at the top and bottom do they step to
+another message.
+
+`e` says why when it will not do it: someone else's message, a system line, a
+read-only room, a row in the thread list, or a quote you have not sent yet.
 
 Whether an edit is allowed at all is the server's call — editing can be disabled
 or time-limited — so nothing changes on screen until the server accepts it, and

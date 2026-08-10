@@ -275,6 +275,8 @@ func (m chatModel) handleMessagesKey(pressed string) (chatModel, tea.Cmd) {
 		return m.markUnreadHere()
 	case "t":
 		return m.toggleThreadList()
+	case "e":
+		return m.editSelected()
 	case "r", "+":
 		return m.openReactPicker()
 	case "\"":
@@ -290,12 +292,33 @@ func (m chatModel) handleMessagesKey(pressed string) (chatModel, tea.Cmd) {
 		return m.requestAttachment(actionOpen)
 	case "enter":
 		return m.openSelectedThread()
-	case "esc", "h", "left":
+	case "esc":
+		if m.mode != bodyTimeline {
+			return m.showTimeline()
+		}
+		// ↑ from the composer is how this pane is usually reached, so esc is how
+		// you get back to writing. h/left still go on out to the room list.
+		m.focus = focusComposer
+		cmd := m.syncComposerFocus()
+		return m, cmd
+	case "h", "left":
 		if m.mode != bodyTimeline {
 			return m.showTimeline()
 		}
 		m.focus = focusRooms
 	}
+	return m, nil
+}
+
+// enterHistory hands the arrows to the timeline, selecting the newest message
+// when nothing is selected yet. This is what ↑ does from an empty composer.
+func (m chatModel) enterHistory() (chatModel, tea.Cmd) {
+	if m.activeRoom == "" {
+		return m, nil
+	}
+	m.focus = focusMessages
+	m.composer.Blur()
+	m.moveMessageCursor(-1)
 	return m, nil
 }
 
@@ -325,14 +348,16 @@ func (m chatModel) handleComposerKey(msg tea.KeyMsg) (chatModel, tea.Cmd) {
 		m.composer.Blur()
 		return m, nil
 	case "up":
-		// An empty composer has nothing to move a cursor through, so ↑ is free
-		// to mean "bring my last message back".
+		// An empty composer has nothing to move a cursor through, so ↑ is free to
+		// mean something else — and what people reach for it for is reading back,
+		// not rewriting. So it steps into the history; `e` in the messages pane
+		// edits.
 		if m.editing() {
 			if m.atComposerTop() {
 				return m.stepEdit(-1)
 			}
 		} else if strings.TrimSpace(m.composer.Value()) == "" {
-			return m.beginEdit()
+			return m.enterHistory()
 		}
 	case "down":
 		if m.editing() && m.atComposerBottom() {

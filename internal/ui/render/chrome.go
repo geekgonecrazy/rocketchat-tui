@@ -336,7 +336,8 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"tab", "move focus: rooms → messages → composer"},
 		{"↑ ↓ / k j", "move within the focused pane"},
 		{"enter", "rooms: open · messages: open or start a thread · composer: send"},
-		{"↑ (composer)", "edit your last message; again for the one before"},
+		{"↑ (composer)", "step back into the message history"},
+		{"e", "edit the selected message, if it is yours"},
 		{"ctrl+t", "threads in this room — works while typing"},
 		{"alt+c", "in a thread: also send your reply to the channel"},
 		{"r", "react to the selected message"},
@@ -354,7 +355,7 @@ func HelpOverlay(theme Theme, width int) []string {
 		{"ctrl+o", "attach a file to send with your message"},
 		{"ctrl+x", "remove the last file you attached"},
 		{"ctrl+g", "write your message in $EDITOR"},
-		{"esc", "close thread / clear filter / leave the composer"},
+		{"esc", "close thread / clear filter / back to the composer"},
 		{"ctrl+r", "resync now"},
 		{"ctrl+l", "mark the current room read"},
 		{",", "settings: desktop notifications and sound"},
@@ -485,13 +486,13 @@ func HelpOverlay(theme Theme, width int) []string {
 		"",
 		theme.Title.Render("  Editing"),
 		"  "+theme.Muted.Render(Truncate(
-			"With the composer empty, ↑ loads your last message into it; press ↑", max(1, width-4))),
+			"↑ from an empty composer steps into the history; scroll to one of your", max(1, width-4))),
 		"  "+theme.Muted.Render(Truncate(
-			"again to go further back and ↓ to come forward. enter saves the edit,", max(1, width-4))),
+			"own messages and e loads it into the composer. ↑ and ↓ then walk to", max(1, width-4))),
 		"  "+theme.Muted.Render(Truncate(
-			"esc leaves it alone. Inside a thread you walk that thread's replies,", max(1, width-4))),
+			"another of yours. enter saves the edit, esc leaves it alone. Inside a", max(1, width-4))),
 		"  "+theme.Muted.Render(Truncate(
-			"never the channel's messages.", max(1, width-4))),
+			"thread you walk that thread's replies, never the channel's messages.", max(1, width-4))),
 	)
 	return lines
 }

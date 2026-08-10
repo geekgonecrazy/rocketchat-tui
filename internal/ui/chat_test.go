@@ -1290,23 +1290,82 @@ func composing(t *testing.T) chatModel {
 	return m
 }
 
-func TestComposerUpRecallsOwnMessagesNewestFirst(t *testing.T) {
+// startEdit is the gesture every edit test starts from: ↑ steps out of the
+// composer into the history, which lands on the newest message, and e loads it.
+func startEdit(m chatModel) chatModel {
+	m, _ = m.Update(press("up"))
+	m, _ = m.Update(press("e"))
+	return m
+}
+
+// ↑ in an empty composer is for reading back, which is what people reach for it
+// for. It must not pull a sent message into the box.
+func TestComposerUpStepsIntoTheHistory(t *testing.T) {
 	m := composing(t)
 
 	m, _ = m.Update(press("up"))
+	if m.editing() {
+		t.Fatalf("↑ started an edit of %q instead of scrolling back", m.editID)
+	}
+	if m.focus != focusMessages {
+		t.Fatalf("focus = %v, want the messages pane", m.focus)
+	}
+	// The first move lands on the newest message, the way it does when the pane
+	// is reached with tab.
+	if m.cursorMsgID != "m4" {
+		t.Fatalf("selection = %q, want the newest message", m.cursorMsgID)
+	}
+
+	// From there ↑ keeps walking back, past someone else's message and past a
+	// system line, because the pane selects every message and not just ours.
+	m, _ = m.Update(press("up"))
+	if m.cursorMsgID != "m3" {
+		t.Errorf("second ↑ selected %q, want m3", m.cursorMsgID)
+	}
+	if m.editing() {
+		t.Errorf("walking the history started an edit of %q", m.editID)
+	}
+}
+
+// esc is how the history hands the keyboard back, since ↑ is how it took it.
+func TestEscapeLeavesTheHistoryForTheComposer(t *testing.T) {
+	m := composing(t)
+	m, _ = m.Update(press("up"))
+
+	m, _ = m.Update(press("esc"))
+	if m.focus != focusComposer {
+		t.Errorf("focus = %v, want the composer back", m.focus)
+	}
+
+	// h and left still go on out to the room list, so nothing loses its way out
+	// of the pane in the other direction.
+	m, _ = m.Update(press("up"))
+	m, _ = m.Update(press("h"))
+	if m.focus != focusRooms {
+		t.Errorf("focus = %v, want the room list", m.focus)
+	}
+}
+
+func TestEditWalksBackThroughOwnMessagesNewestFirst(t *testing.T) {
+	m := startEdit(composing(t))
 	if m.editID != "m4" || m.composer.Value() != "second of mine" {
-		t.Fatalf("first ↑ edited %q with %q, want m4", m.editID, m.composer.Value())
+		t.Fatalf("e edited %q with %q, want m4", m.editID, m.composer.Value())
 	}
 	// The message being rewritten is pointed at in the timeline, not just held
 	// in the box.
 	if m.cursorMsgID != "m4" {
 		t.Errorf("timeline selection = %q, want m4", m.cursorMsgID)
 	}
+	// Loading it hands the keyboard back to the box it was loaded into.
+	if m.focus != focusComposer {
+		t.Fatalf("focus = %v, want the composer", m.focus)
+	}
 
-	// Again steps back past someone else's message and past a system line.
+	// ↑ now steps back past someone else's message and past a system line: the
+	// walk only offers what an edit could actually apply to.
 	m, _ = m.Update(press("up"))
 	if m.editID != "m1" || m.composer.Value() != "first of mine" {
-		t.Fatalf("second ↑ edited %q with %q, want m1", m.editID, m.composer.Value())
+		t.Fatalf("↑ edited %q with %q, want m1", m.editID, m.composer.Value())
 	}
 
 	// There is nothing older of ours; the oldest stays loaded rather than the
@@ -1318,8 +1377,7 @@ func TestComposerUpRecallsOwnMessagesNewestFirst(t *testing.T) {
 }
 
 func TestComposerDownWalksBackAndLeavesEditMode(t *testing.T) {
-	m := composing(t)
-	m, _ = m.Update(press("up"))
+	m := startEdit(composing(t))
 	m, _ = m.Update(press("up")) // on m1
 
 	m, _ = m.Update(press("down"))
@@ -1343,17 +1401,46 @@ func TestComposerUpKeepsATypedDraft(t *testing.T) {
 	}
 
 	m, _ = m.Update(press("up"))
-	if m.editing() {
-		t.Error("↑ with a draft in the box must not recall a message over it")
+	if m.focus != focusComposer {
+		t.Error("↑ with a draft in the box must move the cursor, not leave the composer")
 	}
 	if m.composer.Value() != "half a thought" {
 		t.Errorf("composer = %q, want the draft untouched", m.composer.Value())
 	}
 }
 
+// e is a refusal with a reason rather than a dead key on anything that cannot
+// be edited.
+func TestEditRefusesWhatIsNotYoursToRewrite(t *testing.T) {
+	cases := []struct {
+		name   string
+		back   int // ↑ presses to reach the message
+		notice string
+	}{
+		{"someone else's message", 2, "not yours"},
+		{"a system line", 1, "system message"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := composing(t)
+			// m4 is ours, m3 is a system line, m2 is Alice's.
+			for i := 0; i <= tc.back; i++ {
+				m, _ = m.Update(press("up"))
+			}
+			m, _ = m.Update(press("e"))
+
+			if m.editing() {
+				t.Errorf("started editing %q", m.editID)
+			}
+			if !strings.Contains(m.notice, tc.notice) {
+				t.Errorf("notice = %q, want it to mention %q", m.notice, tc.notice)
+			}
+		})
+	}
+}
+
 func TestEscapeCancelsAnEditWithoutClosingTheThread(t *testing.T) {
-	m := composing(t)
-	m, _ = m.Update(press("up"))
+	m := startEdit(composing(t))
 	for _, r := range " more" {
 		m, _ = m.Update(press(string(r)))
 	}
@@ -1372,8 +1459,7 @@ func TestEscapeCancelsAnEditWithoutClosingTheThread(t *testing.T) {
 }
 
 func TestEditRefusesToSaveNothing(t *testing.T) {
-	m := composing(t)
-	m, _ = m.Update(press("up"))
+	m := startEdit(composing(t))
 	m.composer.SetValue("")
 
 	m, _ = m.Update(press("enter"))
@@ -1386,8 +1472,7 @@ func TestEditRefusesToSaveNothing(t *testing.T) {
 }
 
 func TestEditCommitClearsTheComposer(t *testing.T) {
-	m := composing(t)
-	m, _ = m.Update(press("up"))
+	m := startEdit(composing(t))
 	m.composer.SetValue("second of mine, corrected")
 
 	m, _ = m.Update(press("enter"))
@@ -1408,7 +1493,7 @@ func TestEditModeIsVisible(t *testing.T) {
 		t.Fatal("the edit banner is showing before anything is being edited")
 	}
 
-	m, _ = m.Update(press("up"))
+	m = startEdit(m)
 	view := m.View()
 	if !strings.Contains(view, "editing a sent message") {
 		t.Errorf("no edit banner while editing:\n%s", view)
@@ -1435,9 +1520,9 @@ func TestEditInAThreadRecallsThreadMessagesOnly(t *testing.T) {
 		},
 	})
 
-	m, _ = m.Update(press("up"))
+	m = startEdit(m)
 	if m.editID != "t2" || m.composer.Value() != "my reply" {
-		t.Fatalf("↑ in a thread edited %q/%q, want the newest reply of ours",
+		t.Fatalf("e in a thread edited %q/%q, want the newest reply of ours",
 			m.editID, m.composer.Value())
 	}
 
@@ -1467,15 +1552,18 @@ func TestThreadListOffersNothingToEdit(t *testing.T) {
 		t.Fatalf("mode = %v, want the thread list", m.mode)
 	}
 
-	m, _ = m.Update(press("up"))
+	m.focus = focusMessages
+	m, _ = m.Update(press("e"))
 	if m.editing() {
-		t.Errorf("the thread list recalled %q; its rows are not what the composer addresses", m.editID)
+		t.Errorf("the thread list loaded %q; its rows are not what the composer addresses", m.editID)
+	}
+	if !strings.Contains(m.notice, "open the thread") {
+		t.Errorf("notice = %q, want it to say where the edit lives", m.notice)
 	}
 }
 
 func TestLeavingTheRoomAbandonsAnEdit(t *testing.T) {
-	m := composing(t)
-	m, _ = m.Update(press("up"))
+	m := startEdit(composing(t))
 
 	m.openRoom("r2")
 	if m.editing() {
@@ -1487,8 +1575,7 @@ func TestLeavingTheRoomAbandonsAnEdit(t *testing.T) {
 }
 
 func TestEditIsAbandonedWhenTheMessageGoesAway(t *testing.T) {
-	m := composing(t)
-	m, _ = m.Update(press("up"))
+	m := startEdit(composing(t))
 
 	// The message is deleted elsewhere and the timeline comes back without it.
 	gone := editableTimeline()
@@ -1517,9 +1604,12 @@ func TestReadOnlyRoomHasNothingToEdit(t *testing.T) {
 	m.focus = focusComposer
 	m.composer.Focus()
 
-	m, _ = m.Update(press("up"))
+	m = startEdit(m)
 	if m.editing() {
 		t.Error("a read-only room accepts no edits, so it should offer none")
+	}
+	if !strings.Contains(m.notice, "read-only") {
+		t.Errorf("notice = %q, want an explanation", m.notice)
 	}
 }
 
@@ -1661,8 +1751,7 @@ func TestQuoteRefusesWhatCannotBeQuoted(t *testing.T) {
 // An edit and a quote both claim the composer and both claim enter, so the two
 // cannot be pending at once.
 func TestQuoteRefusesWhileEditing(t *testing.T) {
-	m := composing(t)
-	m, _ = m.Update(press("up"))
+	m := startEdit(composing(t))
 	if !m.editing() {
 		t.Fatal("expected an edit in progress")
 	}

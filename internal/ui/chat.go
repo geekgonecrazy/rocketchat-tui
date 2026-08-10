@@ -626,7 +626,7 @@ func (m chatModel) statusBar() string {
 		connection = "connected"
 	}
 
-	hints := "enter thread · r react · \" quote · ctrl+t threads · ? help"
+	hints := "enter thread · e edit · r react · \" quote · esc composer · ? help"
 	switch {
 	case m.settings.open:
 		hints = "↑↓ move · enter toggle · esc close"
@@ -645,7 +645,7 @@ func (m chatModel) statusBar() string {
 	case m.cmdPicker.active():
 		hints = "tab complete · enter run · esc dismiss"
 	case m.focus == focusComposer:
-		hints = "enter send · / command · ctrl+o attach · ↑ edit last · @mention · ? help"
+		hints = "enter send · / command · ctrl+o attach · ↑ history · @mention · ? help"
 	case m.focus == focusRooms:
 		hints = "enter open · / filter · ctrl+t threads · ? help"
 	}

@@ -8,17 +8,19 @@ import (
 	"github.com/geekgonecrazy/rocketchat-tui/internal/model"
 )
 
-// Editing a message you already sent, recalled from the composer with ↑.
+// Editing a message you already sent: `e` on the selection in the messages
+// pane, then ↑/↓ to walk to another of your messages without leaving the box.
 //
-// The gesture is deliberately narrow: ↑ only recalls from an *empty* composer,
-// so a half-typed message is never displaced, and it only ever offers messages
-// from the context on screen. A thread's composer posts into the thread, so it
-// recalls the thread's own messages; pulling a channel message into it would
-// mean editing something the user cannot see.
+// Editing starts from the pane where the messages are, rather than from the
+// composer, because ↑ there means reading back through the history — the far
+// more common thing to want. Walking with the arrows only ever offers messages
+// from the context on screen: a thread's composer posts into the thread, so it
+// walks the thread's own messages; pulling a channel message into it would mean
+// editing something the user cannot see.
 
 func (m chatModel) editing() bool { return m.editID != "" }
 
-// editCandidates is every message the ↑ gesture may offer, oldest first.
+// editCandidates is every message the ↑/↓ walk may offer, oldest first.
 //
 // "Visible in this context" is the whole rule: what the body pane is currently
 // showing, filtered to the user's own real messages. System lines are not
@@ -65,18 +67,44 @@ func (m chatModel) editTargetGone() bool {
 	return true
 }
 
-// beginEdit loads the newest editable message into the composer.
-func (m chatModel) beginEdit() (chatModel, tea.Cmd) {
-	if m.activeRoom == "" || m.room.ReadOnly {
+// editSelected loads the message under the body cursor into the composer.
+//
+// Because it starts from the selection rather than from the composer, it is not
+// limited to the last thing you said: anything of yours you can scroll to and
+// point at can be rewritten. Every refusal says why, since "e did nothing" is
+// otherwise indistinguishable from a dead key.
+func (m chatModel) editSelected() (chatModel, tea.Cmd) {
+	if m.activeRoom == "" {
 		return m, nil
 	}
-	candidates := m.editCandidates()
-	if len(candidates) == 0 {
-		return m, nil
+	if m.room.ReadOnly {
+		return m.notify("this room is read-only", false)
 	}
+	if m.mode == bodyThreadList {
+		// The rows here are thread parents from all over the room, and the
+		// composer is not addressing any of them.
+		return m.notify("open the thread to edit its message", false)
+	}
+	// A quote belongs to a message not written yet, an edit to one already
+	// posted. Taking both at once would mean deciding which of them enter is for.
+	if m.quoting() {
+		return m.notify("finish the quote first — esc drops it", false)
+	}
+
+	target, ok := m.selectedTarget()
+	if !ok {
+		return m.notify("select a message first", false)
+	}
+	if !target.Own {
+		return m.notify("that message is not yours to edit", false)
+	}
+	if target.IsSystem() {
+		return m.notify("that is a system message, not something to edit", false)
+	}
+
 	m.editDraft = m.composer.Value()
 	m.editPrevCursorID = m.cursorMessageID()
-	m.loadEdit(candidates[len(candidates)-1])
+	m.loadEdit(target)
 	return m, nil
 }
 
